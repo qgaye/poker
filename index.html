@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Codex 德州扑克桌</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="topbar">
+        <div>
+          <h1>Codex 德州扑克桌</h1>
+          <p>1 名人类玩家与 N 个 AI 玩家同桌，AI 可通过本地 Codex CLI 决策。</p>
+        </div>
+        <div class="status-pill" id="serverStatus">检测服务中</div>
+      </section>
+
+      <section class="controls">
+        <label>
+          AI 数量
+          <input id="aiCount" type="number" min="1" max="8" value="5">
+        </label>
+        <label>
+          初始筹码
+          <input id="startingStack" type="number" min="200" step="100" value="2000">
+        </label>
+        <label>
+          大盲
+          <input id="bigBlind" type="number" min="10" step="10" value="40">
+        </label>
+        <label>
+          AI 模式
+          <select id="aiMode">
+            <option value="texassolver" selected>TexasSolver</option>
+            <option value="codex">Codex CLI</option>
+            <option value="local">内置策略</option>
+          </select>
+        </label>
+        <div class="audio-panel">
+          <div class="audio-buttons">
+            <button id="soundToggleBtn" class="sound-toggle" type="button">音效开</button>
+            <button id="musicToggleBtn" class="sound-toggle" type="button">背景音乐开</button>
+          </div>
+          <label>
+            音效音量
+            <input id="effectsVolume" type="range" min="0" max="100" value="75">
+          </label>
+          <label>
+            音乐音量
+            <input id="musicVolume" type="range" min="0" max="100" value="28">
+          </label>
+        </div>
+        <button id="newTableBtn">新牌桌</button>
+        <button id="newHandBtn">下一手</button>
+        <div class="archive-panel">
+          <div>
+            <span>当前牌桌 ID</span>
+            <strong id="currentArchiveId">--</strong>
+          </div>
+          <label>
+            导入牌桌
+            <select id="archiveSelect">
+              <option value="">暂无可导入牌桌</option>
+            </select>
+          </label>
+          <button id="importTableBtn">导入</button>
+          <div class="archive-notice" id="archiveNotice"></div>
+        </div>
+        <div class="flow-control paused" id="flowControl">
+          <div>
+            <span>牌桌状态</span>
+            <strong id="flowStatusText">已暂停</strong>
+          </div>
+          <button id="tableFlowBtn" class="flow-btn paused">开始牌桌</button>
+        </div>
+      </section>
+
+      <section class="table-layout">
+        <aside class="brief-log-panel">
+          <h2>牌局日志</h2>
+          <div class="action-pulse log-action-highlight" id="actionPulse"></div>
+          <ol id="gameLog"></ol>
+        </aside>
+
+        <section class="table-panel">
+          <div class="felt">
+            <div class="blind-summary" id="blindSummary">
+              <span>盲注 -- / --</span>
+            </div>
+            <div class="action-order" id="actionOrder"></div>
+            <div class="table-stage">
+              <div class="table-oval">
+                <div class="pot-board">
+                  <div class="metric">
+                    <span>底池</span>
+                    <strong id="potTotal">0</strong>
+                  </div>
+                  <div class="board" id="board"></div>
+                  <div class="metric">
+                    <span>当前下注</span>
+                    <strong id="currentBet">0</strong>
+                  </div>
+                </div>
+              </div>
+              <div class="seat-grid" id="seats"></div>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <section class="action-panel">
+        <div>
+          <h2 id="turnTitle">等待开局</h2>
+          <p id="turnHint">设置牌桌后开始第一手。</p>
+        </div>
+        <div class="human-actions">
+          <button id="foldBtn">弃牌</button>
+          <button id="checkCallBtn">过牌/跟注</button>
+          <div class="raise-control">
+            <div class="raise-head">
+              <span>加注到</span>
+              <input id="raiseAmountInput" type="number" min="0" value="0">
+            </div>
+            <div class="raise-presets" aria-label="加注倍数">
+              <button type="button" class="raise-multiple" data-multiple="1">1x</button>
+              <button type="button" class="raise-multiple" data-multiple="2">2x</button>
+              <button type="button" class="raise-multiple" data-multiple="3">3x</button>
+            </div>
+            <input id="raiseAmount" type="range" min="0" max="0" value="0" list="raiseTicks">
+            <datalist id="raiseTicks">
+              <option value="10" label="10%"></option>
+              <option value="30" label="30%"></option>
+              <option value="50" label="50%"></option>
+              <option value="80" label="80%"></option>
+            </datalist>
+            <div class="raise-points" aria-label="加注比例点位">
+              <button type="button" class="raise-point" data-percent="10">10%</button>
+              <button type="button" class="raise-point" data-percent="30">30%</button>
+              <button type="button" class="raise-point" data-percent="50">50%</button>
+              <button type="button" class="raise-point" data-percent="80">80%</button>
+            </div>
+            <span id="raiseAmountLabel">0</span>
+          </div>
+          <button id="raiseBtn">加注</button>
+          <button id="allInBtn">全下</button>
+        </div>
+      </section>
+
+      <section class="log-panel">
+        <div class="log-head">
+          <h2>AI 决策分析详情</h2>
+          <div class="log-actions">
+            <button id="toggleReasonBtn">显示分析</button>
+            <button id="clearLogBtn">清空详情</button>
+          </div>
+        </div>
+        <ol id="aiLog"></ol>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

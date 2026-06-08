@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "defaults": {
+    "soundEnabled": true,
+    "musicEnabled": true,
+    "effectsVolume": 0.75,
+    "musicVolume": 0.28
+  },
+  "background": {
+    "label": "默认背景音乐",
+    "src": "./assets/audio/background.wav",
+    "loop": true
+  },
+  "actions": {
+    "check": {
+      "label": "过牌",
+      "src": "./assets/audio/check.wav"
+    },
+    "call": {
+      "label": "跟注",
+      "src": "./assets/audio/call.wav"
+    },
+    "raise": {
+      "label": "下注/加注",
+      "src": "./assets/audio/raise.wav"
+    },
+    "fold": {
+      "label": "弃牌",
+      "src": "./assets/audio/fold.wav"
+    },
+    "all-in": {
+      "label": "全下",
+      "src": "./assets/audio/all-in.wav"
+    }
+  }
+}

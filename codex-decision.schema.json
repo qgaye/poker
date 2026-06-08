@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": ["fold", "check", "call", "raise", "all-in"]
+    },
+    "amount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "reasoning": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240
+    }
+  },
+  "required": ["action", "amount", "reasoning"]
+}

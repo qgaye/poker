@@ -1,0 +1,8 @@
+#!/usr/bin/env sh
+set -eu
+
+ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+SOLVER_DIR="$ROOT_DIR/vendor/texassolver/TexasSolver-v0.2.0-MacOs"
+
+cd "$SOLVER_DIR"
+exec ./console_solver "$@"
