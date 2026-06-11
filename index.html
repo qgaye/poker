@@ -13,30 +13,47 @@
           <h1>Codex 德州扑克桌</h1>
           <p>1 名人类玩家与 N 个 AI 玩家同桌，AI 可通过本地 Codex CLI 决策。</p>
         </div>
-        <div class="status-pill" id="serverStatus">检测服务中</div>
+        <div class="status-panel" id="serverStatus" aria-label="外部服务连接状态">
+          <div class="status-group">
+            <div class="status-pill warn" id="codexStatus" title="Codex 已连接：服务端可成功执行 codex --version。">Codex 检测中</div>
+            <div class="status-pill warn" id="texasSolverStatus" title="TexasSolver 已连接：服务端可找到并执行 vendor/texassolver/TexasSolver-v0.2.0-MacOs/console_solver。">TexasSolver 检测中</div>
+          </div>
+          <div class="status-definitions">
+            <span id="codexStatusDetail">Codex 已连接标准：服务端可成功执行 codex --version</span>
+            <span id="texasSolverStatusDetail">TexasSolver 已连接标准：服务端 console_solver 可执行</span>
+          </div>
+        </div>
       </section>
 
       <section class="controls">
-        <label>
-          AI 数量
-          <input id="aiCount" type="number" min="1" max="8" value="5">
-        </label>
-        <label>
-          初始筹码
-          <input id="startingStack" type="number" min="200" step="100" value="2000">
-        </label>
-        <label>
-          大盲
-          <input id="bigBlind" type="number" min="10" step="10" value="40">
-        </label>
-        <label>
-          AI 模式
-          <select id="aiMode">
-            <option value="texassolver" selected>TexasSolver</option>
-            <option value="codex">Codex CLI</option>
-            <option value="local">内置策略</option>
-          </select>
-        </label>
+        <div class="setup-panel">
+          <label>
+            AI 数量
+            <input id="aiCount" type="number" min="1" max="8" value="5">
+          </label>
+          <label>
+            初始筹码
+            <input id="startingStack" type="number" min="200" step="100" value="2000">
+          </label>
+          <label>
+            大盲
+            <input id="bigBlind" type="number" min="10" step="10" value="40">
+          </label>
+          <label>
+            AI 模式
+            <select id="aiMode">
+              <option value="texassolver" selected>TexasSolver</option>
+              <option value="codex">Codex CLI</option>
+              <option value="local">内置策略</option>
+            </select>
+          </label>
+          <label>
+            翻前 Range
+            <select id="preflopRangeProfile">
+              <option value="">默认 Range</option>
+            </select>
+          </label>
+        </div>
         <div class="audio-panel">
           <div class="audio-buttons">
             <button id="soundToggleBtn" class="sound-toggle" type="button">音效开</button>
@@ -51,8 +68,10 @@
             <input id="musicVolume" type="range" min="0" max="100" value="28">
           </label>
         </div>
-        <button id="newTableBtn">新牌桌</button>
-        <button id="newHandBtn">下一手</button>
+        <div class="table-actions">
+          <button id="newTableBtn">新牌桌</button>
+          <button id="newHandBtn">下一手</button>
+        </div>
         <div class="archive-panel">
           <div>
             <span>当前牌桌 ID</span>
@@ -102,6 +121,10 @@
                     <strong id="currentBet">0</strong>
                   </div>
                 </div>
+                <div class="next-hand-prompt" id="nextHandPrompt" hidden>
+                  <span id="nextHandSummary">本手结束</span>
+                  <button id="tableNextHandBtn" type="button">下一手</button>
+                </div>
               </div>
               <div class="seat-grid" id="seats"></div>
             </div>
@@ -144,7 +167,9 @@
           </div>
           <button id="raiseBtn">加注</button>
           <button id="allInBtn">全下</button>
+          <button id="solverAdviceBtn" type="button">TexasSolver 建议</button>
         </div>
+        <div class="solver-advice empty" id="humanSolverAdvice">轮到你行动时可请求 TexasSolver 建议。</div>
       </section>
 
       <section class="log-panel">
@@ -156,6 +181,35 @@
           </div>
         </div>
         <ol id="aiLog"></ol>
+      </section>
+
+      <section class="gto-review-panel">
+        <div class="review-head">
+          <div>
+            <h2>你的 GTO 复盘</h2>
+            <p>明确选择牌局和手牌，用 TexasSolver 对你的行动点做复盘。</p>
+          </div>
+        </div>
+        <div class="review-targets">
+          <label>
+            复盘牌局
+            <select id="reviewTableSelect">
+              <option value="">暂无可复盘牌局</option>
+            </select>
+          </label>
+          <label>
+            手牌
+            <select id="reviewHandSelect">
+              <option value="">请先选择牌局</option>
+            </select>
+          </label>
+          <div class="review-actions">
+            <button id="reviewCurrentBtn" type="button">使用当前牌局</button>
+            <button id="reviewSelectedBtn" type="button">开始复盘</button>
+          </div>
+        </div>
+        <div class="review-summary" id="gtoReviewSummary">等待选择牌局</div>
+        <div class="review-results" id="gtoReviewResults"></div>
       </section>
     </main>
 

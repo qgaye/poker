@@ -23,6 +23,7 @@ http://localhost:4173
 - AI 决策日志会显示动作、理由、token 消耗，并可展开查看输入 Prompt 与输出信息。
 - AI 分析详情默认隐藏，可在日志区域点击“显示分析”展开。
 - `AI 模式` 可在 `Codex CLI` 和 `内置策略` 间切换。
+- TexasSolver 翻前策略支持选择不同 range profile；默认使用 TexasSolver 自带 `6max_range`。
 - 音频使用本地 `assets/audio/` 资源，支持背景音乐、动作音效开关和音量配置。
 - 每个牌桌目录会按手保存 `ai-analysis/hand-*.json`，用于复盘每次 Codex AI 决策的可见局面、Prompt、输出和 token。
 
@@ -87,3 +88,93 @@ data/<牌桌ID>/ai-analysis/hand-000002.json
 - `sanitizedDecision` / `appliedAction`：模型建议和牌桌校验后实际执行的动作。
 
 前端仍会二次校验动作合法性，避免 AI 输出异常金额破坏牌局状态。
+
+## TexasSolver 翻前 Range
+
+TexasSolver 模式下，翻前不会启动 `console_solver`，而是读取 `config/texassolver.json` 里的 range profile。默认配置等价于原来的 TexasSolver 自带 6-max range：
+
+```json
+{
+  "defaultPreflopRangeProfile": "texassolver-6max",
+  "preflopRangeProfiles": [
+    {
+      "id": "texassolver-6max",
+      "label": "TexasSolver 6-max",
+      "type": "texassolver-tree",
+      "seatCount": 6,
+      "root": "vendor/texassolver/TexasSolver-v0.2.0-MacOs/ranges/6max_range",
+      "defaultOpenSizesBb": {
+        "UTG": 2.5,
+        "MP": 2.5,
+        "CO": 2.5,
+        "BTN": 2.5,
+        "SB": 3.0
+      }
+    }
+  ]
+}
+```
+
+接入其他 range 有两种方式。
+
+第一种是 TexasSolver tree 目录格式：
+
+```json
+{
+  "id": "my-6max-100bb",
+  "label": "My 6-max 100bb",
+  "type": "texassolver-tree",
+  "seatCount": 6,
+  "root": "ranges/my-6max-100bb",
+  "defaultOpenSizesBb": {
+    "UTG": 2.3,
+    "MP": 2.3,
+    "CO": 2.3,
+    "BTN": 2.3,
+    "SB": 3.0
+  }
+}
+```
+
+第二种是轻量手牌列表格式，适合接入网上公开的起手牌分组、EV 排名或公式派生 range：
+
+```json
+{
+  "id": "my-open-chart",
+  "label": "My Open Chart",
+  "type": "simple-hand-list",
+  "seatCount": 6,
+  "defaultOpenSizesBb": {
+    "UTG": 2.5,
+    "MP": 2.5,
+    "CO": 2.5,
+    "BTN": 2.5,
+    "SB": 3.0
+  },
+  "ranges": {
+    "open": {
+      "UTG": "AA,KK,QQ,AKs",
+      "BTN": "AA,KK,QQ,JJ,TT,99,88,AKs,AKo,AQs,AQo,KQs"
+    },
+    "call": {
+      "_default": "AA,KK,QQ,JJ,TT,AKs,AKo,AQs,KQs"
+    },
+    "raise": {
+      "_default": "AA,KK,QQ,AKs,AKo"
+    },
+    "allIn": {
+      "_default": "AA,KK,AKs"
+    }
+  }
+}
+```
+
+当前内置的额外 profile：
+
+- `sklansky-tight-6max`：根据 Sklansky 起手牌分组整理出的偏紧 6-max 策略。
+- `pokerroom-ev-balanced-6max`：根据 PokerRoom 真实线上牌局 EV tiers 整理出的中等松紧策略。
+- `chen-loose-6max`：根据 Chen Formula 思路整理出的偏松 6-max 策略。
+
+这些公开资料来自 Wikipedia 的 Texas hold 'em starting hands 条目：`https://en.wikipedia.org/wiki/Texas_hold_%27em_starting_hands`。它们不是 GTO 方案，主要用于提供可切换的 baseline 策略和对照测试。
+
+前端的“翻前 Range”下拉框会自动列出这些 profile；牌桌归档也会保存当时选中的 `preflopRangeProfileId`，方便复盘。

@@ -1,6 +1,128 @@
 {
+  "defaultPreflopRangeProfile": "texassolver-6max",
   "preflopRangeRoot": "vendor/texassolver/TexasSolver-v0.2.0-MacOs/ranges/6max_range",
+  "preflopRangeProfiles": [
+    {
+      "id": "texassolver-6max",
+      "label": "TexasSolver 6-max",
+      "type": "texassolver-tree",
+      "seatCount": 6,
+      "root": "vendor/texassolver/TexasSolver-v0.2.0-MacOs/ranges/6max_range",
+      "defaultOpenSizesBb": {
+        "UTG": 2.5,
+        "MP": 2.5,
+        "CO": 2.5,
+        "BTN": 2.5,
+        "SB": 3.0
+      }
+    },
+    {
+      "id": "sklansky-tight-6max",
+      "label": "Sklansky Tight 6-max",
+      "type": "simple-hand-list",
+      "seatCount": 6,
+      "source": "Sklansky starting-hand groups summarized on https://en.wikipedia.org/wiki/Texas_hold_%27em_starting_hands",
+      "defaultOpenSizesBb": {
+        "UTG": 2.5,
+        "MP": 2.5,
+        "CO": 2.5,
+        "BTN": 2.5,
+        "SB": 3.0
+      },
+      "ranges": {
+        "open": {
+          "UTG": "AA,KK,QQ,JJ,TT,AKs,AKo,AQs",
+          "MP": "AA,KK,QQ,JJ,TT,99,AKs,AKo,AQs,AQo,AJs,KQs",
+          "CO": "AA,KK,QQ,JJ,TT,99,88,77,AKs,AKo,AQs,AQo,AJs,ATs,KQs,KQo,KJs,QJs,JTs",
+          "BTN": "AA,KK,QQ,JJ,TT,99,88,77,66,55,44,33,22,AKs,AKo,AQs,AQo,AJs,AJo,ATs,A9s,A8s,A7s,A6s,A5s,A4s,A3s,A2s,KQs,KQo,KJs,KTs,QJs,QTs,JTs,T9s,98s,87s,76s,65s",
+          "SB": "AA,KK,QQ,JJ,TT,99,88,77,66,55,44,33,22,AKs,AKo,AQs,AQo,AJs,AJo,ATs,A9s,A8s,A7s,A6s,A5s,A4s,A3s,A2s,KQs,KQo,KJs,KTs,QJs,QTs,JTs,T9s,98s,87s,76s,65s"
+        },
+        "call": {
+          "_default": "AA,KK,QQ,JJ,TT,99,88,AKs,AKo,AQs,AQo,AJs,KQs,KQo,QJs,JTs",
+          "BTN": "AA,KK,QQ,JJ,TT,99,88,77,66,55,AKs,AKo,AQs,AQo,AJs,AJo,ATs,A9s,A5s,A4s,KQs,KQo,KJs,KTs,QJs,QTs,JTs,T9s,98s",
+          "BB": "AA,KK,QQ,JJ,TT,99,88,77,66,55,44,33,22,AKs,AKo,AQs,AQo,AJs,AJo,ATs,A9s,A8s,A7s,A6s,A5s,A4s,A3s,A2s,KQs,KQo,KJs,KJo,KTs,K9s,QJs,QJo,QTs,Q9s,JTs,J9s,T9s,98s,87s,76s,65s"
+        },
+        "raise": {
+          "_default": "AA,KK,QQ,AKs,AKo",
+          "BTN": "AA,KK,QQ,JJ,TT,AKs,AKo,AQs,AQo,AJs,KQs"
+        },
+        "allIn": {
+          "_default": "AA,KK,AKs"
+        }
+      }
+    },
+    {
+      "id": "pokerroom-ev-balanced-6max",
+      "label": "PokerRoom EV Balanced 6-max",
+      "type": "simple-hand-list",
+      "seatCount": 6,
+      "source": "PokerRoom expected-value tiers summarized on https://en.wikipedia.org/wiki/Texas_hold_%27em_starting_hands",
+      "defaultOpenSizesBb": {
+        "UTG": 2.3,
+        "MP": 2.3,
+        "CO": 2.3,
+        "BTN": 2.3,
+        "SB": 3.0
+      },
+      "ranges": {
+        "open": {
+          "UTG": "AA,KK,QQ,JJ,TT,99,AKs,AKo,AQs,AQo,AJs,KQs",
+          "MP": "AA,KK,QQ,JJ,TT,99,88,77,AKs,AKo,AQs,AQo,AJs,AJo,ATs,A9s,KQs,KQo,KJs,KTs,QJs,QTs,JTs",
+          "CO": "AA,KK,QQ,JJ,TT,99,88,77,66,55,AKs,AKo,AQs,AQo,AJs,AJo,ATs,ATo,A9s,A8s,A7s,A6s,A5s,A4s,A3s,KQs,KQo,KJs,KJo,KTs,KTo,K9s,K8s,QJs,QJo,QTs,Q9s,JTs,J9s,T9s,98s",
+          "BTN": "AA,KK,QQ,JJ,TT,99,88,77,66,55,44,33,22,AKs,AKo,AQs,AQo,AJs,AJo,ATs,ATo,A9s,A9o,A8s,A7s,A6s,A5s,A4s,A3s,A2s,KQs,KQo,KJs,KJo,KTs,KTo,K9s,K8s,K7s,QJs,QJo,QTs,QTo,Q9s,Q8s,JTs,JTo,J9s,J8s,T9s,T8s,98s,87s,76s",
+          "SB": "AA,KK,QQ,JJ,TT,99,88,77,66,55,44,33,22,AKs,AKo,AQs,AQo,AJs,AJo,ATs,ATo,A9s,A8s,A7s,A6s,A5s,A4s,A3s,A2s,KQs,KQo,KJs,KJo,KTs,KTo,K9s,K8s,QJs,QJo,QTs,QTo,Q9s,JTs,JTo,J9s,T9s,T8s,98s,87s,76s"
+        },
+        "call": {
+          "_default": "AA,KK,QQ,JJ,TT,99,88,77,AKs,AKo,AQs,AQo,AJs,AJo,ATs,KQs,KQo,KJs,KTs,QJs,QTs,JTs,T9s,98s",
+          "BB": "AA,KK,QQ,JJ,TT,99,88,77,66,55,44,33,22,AKs,AKo,AQs,AQo,AJs,AJo,ATs,ATo,A9s,A9o,A8s,A7s,A6s,A5s,A4s,A3s,A2s,KQs,KQo,KJs,KJo,KTs,KTo,K9s,K8s,K7s,QJs,QJo,QTs,QTo,Q9s,Q8s,JTs,JTo,J9s,J8s,T9s,T8s,98s,87s,76s,65s"
+        },
+        "raise": {
+          "_default": "AA,KK,QQ,JJ,AKs,AKo,AQs",
+          "CO": "AA,KK,QQ,JJ,TT,AKs,AKo,AQs,AQo,AJs,KQs",
+          "BTN": "AA,KK,QQ,JJ,TT,99,AKs,AKo,AQs,AQo,AJs,AJo,ATs,KQs,KQo,KJs"
+        },
+        "allIn": {
+          "_default": "AA,KK,QQ,AKs,AKo"
+        }
+      }
+    },
+    {
+      "id": "chen-loose-6max",
+      "label": "Chen Loose 6-max",
+      "type": "simple-hand-list",
+      "seatCount": 6,
+      "source": "Chen Formula summarized on https://en.wikipedia.org/wiki/Texas_hold_%27em_starting_hands",
+      "defaultOpenSizesBb": {
+        "UTG": 2.2,
+        "MP": 2.2,
+        "CO": 2.2,
+        "BTN": 2.2,
+        "SB": 3.0
+      },
+      "ranges": {
+        "open": {
+          "UTG": "AA,KK,QQ,JJ,TT,99,88,AKs,AKo,AQs,AQo,AJs,KQs,KJs,QJs,JTs",
+          "MP": "AA,KK,QQ,JJ,TT,99,88,77,66,AKs,AKo,AQs,AQo,AJs,AJo,ATs,KQs,KQo,KJs,KTs,QJs,QTs,JTs,T9s,98s",
+          "CO": "AA,KK,QQ,JJ,TT,99,88,77,66,55,44,33,22,AKs,AKo,AQs,AQo,AJs,AJo,ATs,ATo,A9s,A8s,A7s,A5s,A4s,KQs,KQo,KJs,KJo,KTs,KTo,K9s,QJs,QJo,QTs,QTo,Q9s,JTs,JTo,J9s,T9s,T8s,98s,87s,76s,65s,54s",
+          "BTN": "AA,KK,QQ,JJ,TT,99,88,77,66,55,44,33,22,AKs,AKo,AQs,AQo,AJs,AJo,ATs,ATo,A9s,A9o,A8s,A8o,A7s,A6s,A5s,A4s,A3s,A2s,KQs,KQo,KJs,KJo,KTs,KTo,K9s,K9o,K8s,K7s,K6s,QJs,QJo,QTs,QTo,Q9s,Q9o,Q8s,Q7s,JTs,JTo,J9s,J9o,J8s,J7s,T9s,T9o,T8s,T7s,98s,97s,87s,86s,76s,75s,65s,64s,54s,53s,43s",
+          "SB": "AA,KK,QQ,JJ,TT,99,88,77,66,55,44,33,22,AKs,AKo,AQs,AQo,AJs,AJo,ATs,ATo,A9s,A9o,A8s,A7s,A6s,A5s,A4s,A3s,A2s,KQs,KQo,KJs,KJo,KTs,KTo,K9s,K8s,K7s,QJs,QJo,QTs,QTo,Q9s,Q8s,JTs,JTo,J9s,J8s,T9s,T8s,98s,87s,76s,65s,54s"
+        },
+        "call": {
+          "_default": "AA,KK,QQ,JJ,TT,99,88,77,66,55,AKs,AKo,AQs,AQo,AJs,AJo,ATs,A9s,A8s,A5s,A4s,KQs,KQo,KJs,KJo,KTs,K9s,QJs,QJo,QTs,Q9s,JTs,J9s,T9s,98s,87s,76s,65s",
+          "BB": "AA,KK,QQ,JJ,TT,99,88,77,66,55,44,33,22,AKs,AKo,AQs,AQo,AJs,AJo,ATs,ATo,A9s,A9o,A8s,A8o,A7s,A6s,A5s,A4s,A3s,A2s,KQs,KQo,KJs,KJo,KTs,KTo,K9s,K9o,K8s,K7s,K6s,QJs,QJo,QTs,QTo,Q9s,Q9o,Q8s,Q7s,JTs,JTo,J9s,J9o,J8s,J7s,T9s,T9o,T8s,T7s,98s,97s,87s,86s,76s,75s,65s,64s,54s,53s,43s"
+        },
+        "raise": {
+          "_default": "AA,KK,QQ,JJ,TT,AKs,AKo,AQs,AQo,AJs,KQs",
+          "BTN": "AA,KK,QQ,JJ,TT,99,88,AKs,AKo,AQs,AQo,AJs,AJo,ATs,A9s,KQs,KQo,KJs,KTs,QJs"
+        },
+        "allIn": {
+          "_default": "AA,KK,QQ,JJ,AKs,AKo"
+        }
+      }
+    }
+  ],
   "postflopTimeoutMs": 600000,
+  "postflopThreadNum": 8,
   "defaultOpenSizesBb": {
     "UTG": 2.5,
     "MP": 2.5,

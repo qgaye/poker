@@ -357,28 +357,69 @@ function listTableArchives() {
     .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
 }
 
-function codexAvailable() {
+function codexStatus() {
   return new Promise(resolve => {
-    const child = spawn("codex", ["--version"], { stdio: ["ignore", "ignore", "ignore"] });
-    child.on("close", code => resolve(code === 0));
-    child.on("error", () => resolve(false));
+    const child = spawn("codex", ["--version"], { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", chunk => { stdout += chunk; });
+    child.stderr.on("data", chunk => { stderr += chunk; });
+    child.on("close", code => {
+      const output = `${stdout}${stderr}`.trim();
+      resolve({
+        connected: code === 0,
+        standard: "服务端可成功执行 codex --version",
+        command: "codex --version",
+        message: code === 0
+          ? (output.split("\n").at(-1) || "codex --version 成功")
+          : `codex --version 退出码 ${code}`
+      });
+    });
+    child.on("error", error => resolve({
+      connected: false,
+      standard: "服务端可成功执行 codex --version",
+      command: "codex --version",
+      message: error.code === "ENOENT"
+        ? "服务端 PATH 中找不到 codex 命令"
+        : error.message
+    }));
   });
 }
 
-function texasSolverAvailable() {
+async function codexAvailable() {
+  return (await codexStatus()).connected;
+}
+
+function texasSolverStatus() {
   try {
     fs.accessSync(texasSolverBin, fs.constants.X_OK);
-    return true;
+    return {
+      connected: true,
+      standard: "服务端可找到并执行 TexasSolver console_solver",
+      command: texasSolverBin,
+      message: "console_solver 可执行"
+    };
   } catch {
-    return false;
+    return {
+      connected: false,
+      standard: "服务端可找到并执行 TexasSolver console_solver",
+      command: texasSolverBin,
+      message: "console_solver 不存在或不可执行"
+    };
   }
+}
+
+function texasSolverAvailable() {
+  return texasSolverStatus().connected;
 }
 
 function loadTexasSolverConfig() {
   const defaults = {
     preflopRangeRoot: path.join("vendor", "texassolver", "TexasSolver-v0.2.0-MacOs", "ranges", "6max_range"),
     postflopTimeoutMs: 600_000,
-    defaultOpenSizesBb: { UTG: 2.5, MP: 2.5, CO: 2.5, BTN: 2.5, SB: 3.0 }
+    postflopThreadNum: Math.max(4, Math.min(12, os.cpus().length || 4)),
+    defaultOpenSizesBb: { UTG: 2.5, MP: 2.5, CO: 2.5, BTN: 2.5, SB: 3.0 },
+    defaultPreflopRangeProfile: "texassolver-6max"
   };
   try {
     return { ...defaults, ...JSON.parse(fs.readFileSync(texasSolverConfigPath, "utf8")) };
@@ -387,17 +428,70 @@ function loadTexasSolverConfig() {
   }
 }
 
-function configuredPreflopRangeRoot() {
+function absoluteConfigPath(value) {
+  return path.isAbsolute(value) ? value : path.join(root, value);
+}
+
+function configuredPreflopRangeProfiles() {
   const config = loadTexasSolverConfig();
-  return path.isAbsolute(config.preflopRangeRoot)
-    ? config.preflopRangeRoot
-    : path.join(root, config.preflopRangeRoot);
+  const profileList = Array.isArray(config.preflopRangeProfiles) ? config.preflopRangeProfiles : [];
+  const profiles = profileList
+    .filter(profile => profile?.id && (profile?.root || profile?.type === "simple-hand-list"))
+    .map(profile => ({
+      ...profile,
+      type: profile.type || "texassolver-tree",
+      label: profile.label || profile.id,
+      seatCount: Number(profile.seatCount) || 6,
+      root: profile.root ? absoluteConfigPath(profile.root) : "",
+      defaultOpenSizesBb: profile.defaultOpenSizesBb || config.defaultOpenSizesBb || {}
+    }));
+
+  if (!profiles.length && config.preflopRangeRoot) {
+    profiles.push({
+      id: "texassolver-6max",
+      label: "TexasSolver 6-max",
+      type: "texassolver-tree",
+      seatCount: 6,
+      root: absoluteConfigPath(config.preflopRangeRoot),
+      defaultOpenSizesBb: config.defaultOpenSizesBb || {}
+    });
+  }
+  return profiles;
+}
+
+function configuredPreflopRangeProfile(profileId = "") {
+  const config = loadTexasSolverConfig();
+  const profiles = configuredPreflopRangeProfiles();
+  const selectedId = profileId || config.defaultPreflopRangeProfile;
+  return profiles.find(profile => profile.id === selectedId) || profiles[0] || null;
+}
+
+function publicPreflopRangeProfiles() {
+  const config = loadTexasSolverConfig();
+  const selected = configuredPreflopRangeProfile(config.defaultPreflopRangeProfile);
+  return {
+    defaultProfileId: selected?.id || "",
+    profiles: configuredPreflopRangeProfiles().map(profile => ({
+      id: profile.id,
+      label: profile.label,
+      type: profile.type,
+      seatCount: profile.seatCount,
+      available: profile.type === "simple-hand-list" || fs.existsSync(profile.root)
+    }))
+  };
 }
 
 function configuredPostflopTimeoutMs() {
   const config = loadTexasSolverConfig();
   const timeout = Number(config.postflopTimeoutMs);
   return Number.isFinite(timeout) && timeout > 0 ? timeout : 600_000;
+}
+
+function configuredPostflopThreadNum() {
+  const config = loadTexasSolverConfig();
+  const threads = Number(config.postflopThreadNum);
+  if (Number.isFinite(threads) && threads > 0) return Math.max(1, Math.floor(threads));
+  return Math.max(4, Math.min(12, os.cpus().length || 4));
 }
 
 function formatBb(value) {
@@ -522,6 +616,26 @@ function maxHandFrequency(files, handClass) {
   return { frequency: best, sourceFile };
 }
 
+function parseHandList(value) {
+  if (Array.isArray(value)) return new Set(value.map(item => String(item).trim()).filter(Boolean));
+  return new Set(String(value || "")
+    .split(",")
+    .map(item => item.trim())
+    .filter(Boolean));
+}
+
+function profileHandSet(profile, bucket, position) {
+  const group = profile?.ranges?.[bucket] || {};
+  return new Set([
+    ...parseHandList(group._default),
+    ...parseHandList(group[position])
+  ]);
+}
+
+function handInProfileRange(profile, bucket, position, handClass) {
+  return profileHandSet(profile, bucket, position).has(handClass);
+}
+
 function preflopPathFromHistory(actions) {
   const parts = [];
   for (const item of actions || []) {
@@ -575,10 +689,10 @@ function mapPreflopRangeAction(payload, actionName) {
   return null;
 }
 
-function choosePreflopOpen(payload, rangeRoot, handClass) {
-  const config = loadTexasSolverConfig();
+function choosePreflopOpen(payload, profile, handClass) {
+  const rangeRoot = profile.root;
   const position = payload?.player?.position || "";
-  const openSize = config.defaultOpenSizesBb?.[position];
+  const openSize = profile.defaultOpenSizesBb?.[position];
   if (!openSize) return null;
   const openDir = path.join(rangeRoot, position, formatBb(openSize));
   const files = findFiles(openDir, (_file, name) => name === `${position}_range.txt`, 80);
@@ -586,9 +700,11 @@ function choosePreflopOpen(payload, rangeRoot, handClass) {
   const raiseAmount = Math.round(openSize * (Number(payload?.table?.bigBlind) || 1));
   return {
     decision: result.frequency > 0
-      ? { action: "raise", amount: raiseAmount, reasoning: `TexasSolver Preflop Range: ${position} ${formatBb(openSize)} open，${handClass} 频率 ${(result.frequency * 100).toFixed(1)}%。` }
-      : { action: "fold", amount: 0, reasoning: `TexasSolver Preflop Range: ${position} open range 未包含 ${handClass}。` },
+      ? { action: "raise", amount: raiseAmount, reasoning: `${profile.label}: ${position} ${formatBb(openSize)} open，${handClass} 频率 ${(result.frequency * 100).toFixed(1)}%。` }
+      : { action: "fold", amount: 0, reasoning: `${profile.label}: ${position} open range 未包含 ${handClass}。` },
     debug: {
+      rangeProfileId: profile.id,
+      rangeProfileLabel: profile.label,
       rangeRoot,
       rangePath: openDir,
       sourceFile: result.sourceFile,
@@ -599,7 +715,8 @@ function choosePreflopOpen(payload, rangeRoot, handClass) {
   };
 }
 
-function choosePreflopResponse(payload, rangeRoot, handClass) {
+function choosePreflopResponse(payload, profile, handClass) {
+  const rangeRoot = profile.root;
   const position = payload?.player?.position || "";
   const historyVariants = preflopPathVariants(payload?.table?.preflopActions || []);
   const resolvedVariants = historyVariants.map(variant => ({
@@ -630,9 +747,11 @@ function choosePreflopResponse(payload, rangeRoot, handClass) {
       decision: {
         action: payload?.legalActions?.canFold ? "fold" : "check",
         amount: 0,
-        reasoning: `TexasSolver Preflop Range: ${position} 当前路径下 ${handClass} 不在任何继续行动 range，选择弃牌。`
+        reasoning: `${profile.label}: ${position} 当前路径下 ${handClass} 不在任何继续行动 range，选择弃牌。`
       },
       debug: {
+        rangeProfileId: profile.id,
+        rangeProfileLabel: profile.label,
         rangeRoot,
         rangePath: positionPath,
         historyPath,
@@ -651,9 +770,11 @@ function choosePreflopResponse(payload, rangeRoot, handClass) {
   return {
     decision: {
       ...best.mapped,
-      reasoning: `TexasSolver Preflop Range: ${position} 选择 ${best.actionName}，${handClass} 频率 ${(best.frequency * 100).toFixed(1)}%。`
+      reasoning: `${profile.label}: ${position} 选择 ${best.actionName}，${handClass} 频率 ${(best.frequency * 100).toFixed(1)}%。`
     },
     debug: {
+      rangeProfileId: profile.id,
+      rangeProfileLabel: profile.label,
       rangeRoot,
       rangePath: positionPath,
       historyPath,
@@ -670,30 +791,103 @@ function choosePreflopResponse(payload, rangeRoot, handClass) {
   };
 }
 
-function runPreflopRangeDecision(payload) {
-  const rangeRoot = configuredPreflopRangeRoot();
+function chooseSimplePreflopOpen(payload, profile, handClass) {
+  const position = payload?.player?.position || "";
+  const openSize = profile.defaultOpenSizesBb?.[position];
+  if (!openSize) return null;
+  const inRange = handInProfileRange(profile, "open", position, handClass);
+  const legal = payload?.legalActions || {};
+  const raiseAmount = Math.round(openSize * (Number(payload?.table?.bigBlind) || 1));
+  const decision = inRange && legal.canRaise
+    ? { action: "raise", amount: raiseAmount, reasoning: `${profile.label}: ${position} open range 包含 ${handClass}。` }
+    : { action: legal.canFold ? "fold" : "check", amount: 0, reasoning: `${profile.label}: ${position} open range 未包含 ${handClass}。` };
+  return {
+    decision,
+    debug: {
+      rangeProfileId: profile.id,
+      rangeProfileLabel: profile.label,
+      rangeType: profile.type,
+      position,
+      handClass,
+      selectedAction: decision.action === "raise" ? `${formatBb(openSize)} open` : "Fold"
+    }
+  };
+}
+
+function chooseSimplePreflopResponse(payload, profile, handClass) {
+  const position = payload?.player?.position || "";
+  const legal = payload?.legalActions || {};
+  const matched = [];
+  if (handInProfileRange(profile, "allIn", position, handClass) && legal.canAllIn) matched.push("all-in");
+  if (handInProfileRange(profile, "raise", position, handClass) && legal.canRaise) matched.push("raise");
+  if (handInProfileRange(profile, "call", position, handClass) && legal.canCall) matched.push("call");
+
+  let decision = null;
+  if (matched.includes("raise")) {
+    decision = { action: "raise", amount: Number(legal.minRaiseTo) || 0, reasoning: `${profile.label}: ${position} 反击 range 包含 ${handClass}。` };
+  } else if (matched.includes("all-in")) {
+    decision = { action: "all-in", amount: 0, reasoning: `${profile.label}: ${position} all-in range 包含 ${handClass}。` };
+  } else if (matched.includes("call")) {
+    decision = { action: "call", amount: 0, reasoning: `${profile.label}: ${position} defend/call range 包含 ${handClass}。` };
+  } else {
+    decision = {
+      action: legal.canCheck ? "check" : "fold",
+      amount: 0,
+      reasoning: `${profile.label}: ${position} 当前继续范围未包含 ${handClass}。`
+    };
+  }
+
+  return {
+    decision,
+    debug: {
+      rangeProfileId: profile.id,
+      rangeProfileLabel: profile.label,
+      rangeType: profile.type,
+      position,
+      handClass,
+      preflopActions: payload?.table?.preflopActions || [],
+      matchedRanges: matched,
+      selectedAction: decision.action
+    }
+  };
+}
+
+function runPreflopRangeDecision(payload, options = {}) {
+  const profile = configuredPreflopRangeProfile(options.preflopRangeProfileId);
+  const rangeRoot = profile?.root || "";
   const handClass = handClassFromCards(payload?.player?.holeCards || []);
   const reasons = [];
-  if (!fs.existsSync(rangeRoot)) reasons.push(`preflop range root 不存在：${rangeRoot}`);
-  if ((Number(payload?.table?.seatCount) || 0) !== 6) reasons.push("当前只支持 6-max TexasSolver 自带翻前 range");
+  if (!profile) reasons.push("未配置可用的翻前 range profile");
+  if (!["texassolver-tree", "simple-hand-list"].includes(profile?.type)) reasons.push(`暂不支持的翻前 range profile 类型：${profile.type}`);
+  if (profile?.type === "texassolver-tree" && !fs.existsSync(rangeRoot)) reasons.push(`preflop range root 不存在：${rangeRoot}`);
+  if ((Number(payload?.table?.seatCount) || 0) !== profile?.seatCount) reasons.push(`当前 range profile 只支持 ${profile?.seatCount || 0}-max`);
   if (!payload?.player?.position) reasons.push("缺少玩家位置，无法查找翻前 range");
   if (!handClass) reasons.push("无法从手牌构造 hand class");
   if (reasons.length) {
     return {
       error: `TexasSolver Preflop Range 未运行：${reasons.join("；")}`,
-      debug: { provider: "texassolver-preflop", rangeRoot, handClass, unsupportedReasons: reasons }
+      debug: {
+        provider: "texassolver-preflop",
+        rangeProfileId: profile?.id || "",
+        rangeProfileLabel: profile?.label || "",
+        rangeRoot,
+        handClass,
+        unsupportedReasons: reasons
+      }
     };
   }
 
   const history = payload?.table?.preflopActions || [];
-  const result = history.length
-    ? choosePreflopResponse(payload, rangeRoot, handClass)
-    : choosePreflopOpen(payload, rangeRoot, handClass);
+  const result = profile.type === "simple-hand-list"
+    ? (history.length ? chooseSimplePreflopResponse(payload, profile, handClass) : chooseSimplePreflopOpen(payload, profile, handClass))
+    : (history.length ? choosePreflopResponse(payload, profile, handClass) : choosePreflopOpen(payload, profile, handClass));
   if (!result) {
     return {
       error: "TexasSolver Preflop Range 未找到当前行动路径或当前手牌策略。",
       debug: {
         provider: "texassolver-preflop",
+        rangeProfileId: profile.id,
+        rangeProfileLabel: profile.label,
         rangeRoot,
         handClass,
         historyPath: preflopPathFromHistory(history),
@@ -706,6 +900,8 @@ function runPreflopRangeDecision(payload) {
     debug: {
       provider: "texassolver-preflop",
       solverInput: JSON.stringify({
+        rangeProfileId: profile.id,
+        rangeProfileLabel: profile.label,
         rangeRoot,
         handClass,
         position: payload.player.position,
@@ -870,6 +1066,7 @@ const DEFAULT_TEXAS_SOLVER_RANGE = allHoldemRangeClasses();
 function makeTexasSolverInput(payload, outputFile) {
   const legal = payload?.legalActions || {};
   const street = payload?.table?.street || "";
+  const threadNum = configuredPostflopThreadNum();
   const board = Array.isArray(payload?.table?.community)
     ? payload.table.community.map(parseVisibleCard).filter(Boolean)
     : [];
@@ -910,7 +1107,7 @@ function makeTexasSolverInput(payload, outputFile) {
     "set_bet_sizes ip,river,raise,60",
     "set_allin_threshold 1.0",
     "build_tree",
-    "set_thread_num 4",
+    `set_thread_num ${threadNum}`,
     "set_accuracy 2.0",
     "set_max_iteration 40",
     "set_print_interval 20",
@@ -928,7 +1125,8 @@ function makeTexasSolverInput(payload, outputFile) {
     exactHand: exactHandKey(payload?.player?.holeCards || []),
     outputFile,
     pot,
-    effectiveStack
+    effectiveStack,
+    threadNum
   };
 }
 
@@ -1042,10 +1240,236 @@ function summarizeTexasSolverOutput(outputJson, strategy, selectedAction, output
   };
 }
 
-function runTexasSolverDecision(payload) {
+function totalPotForState(tableState) {
+  return (tableState?.players || []).reduce((sum, player) => sum + (Number(player?.invested) || 0), 0);
+}
+
+function tablePositionForState(tableState, index) {
+  if (!tableState || tableState.players.length !== 6) return "";
+  const offset = (index - tableState.dealerIndex + tableState.players.length) % tableState.players.length;
+  return ["BTN", "SB", "BB", "UTG", "MP", "CO"][offset] || "";
+}
+
+function legalActionsForState(tableState, player) {
+  const currentBet = Number(tableState?.currentBet) || 0;
+  const bigBlind = Number(tableState?.bigBlind) || 1;
+  const minRaise = Number(tableState?.minRaise) || bigBlind;
+  const toCall = Math.max(0, currentBet - (Number(player?.bet) || 0));
+  const maxTotal = (Number(player?.bet) || 0) + (Number(player?.stack) || 0);
+  const minRaiseTo = currentBet + minRaise;
+  return {
+    canFold: toCall > 0,
+    canCheck: toCall === 0,
+    canCall: toCall > 0 && (Number(player?.stack) || 0) > 0,
+    canRaise: (Number(player?.stack) || 0) > toCall && maxTotal > currentBet,
+    canAllIn: (Number(player?.stack) || 0) > 0,
+    toCall,
+    minRaiseTo: Math.min(minRaiseTo, maxTotal),
+    maxTotal,
+    currentBet
+  };
+}
+
+function contendersForState(tableState) {
+  return (tableState?.players || []).filter(player => !player.out && !player.folded);
+}
+
+function publicSolverStateFromArchiveState(tableState, playerId) {
+  const playerIndex = (tableState?.players || []).findIndex(player => player.id === playerId);
+  const player = tableState?.players?.[playerIndex];
+  if (!player) return null;
+  const legal = legalActionsForState(tableState, player);
+  return {
+    player: {
+      name: player.name,
+      position: tablePositionForState(tableState, playerIndex),
+      stack: player.stack,
+      bet: player.bet,
+      invested: player.invested,
+      holeCards: (player.hand || []).map(cardTextFromArchive)
+    },
+    table: {
+      street: tableState.street,
+      streetLabel: STREET_LABEL_ARCHIVE[tableState.street] || tableState.street,
+      community: (tableState.community || []).map(cardTextFromArchive),
+      pot: totalPotForState(tableState),
+      smallBlind: tableState.smallBlind,
+      bigBlind: tableState.bigBlind,
+      currentBet: tableState.currentBet,
+      toCall: legal.toCall,
+      minRaiseTo: legal.minRaiseTo,
+      maxRaiseTo: legal.maxTotal,
+      seatCount: (tableState.players || []).filter(candidate => !candidate.out).length,
+      preflopActions: tableState.preflopActions || [],
+      activePlayers: contendersForState(tableState).map(candidate => ({
+        name: candidate.name,
+        position: tablePositionForState(tableState, tableState.players.indexOf(candidate)),
+        stack: candidate.stack,
+        bet: candidate.bet,
+        invested: candidate.invested,
+        folded: candidate.folded,
+        allIn: candidate.allIn,
+        lastAction: candidate.lastAction
+      }))
+    },
+    legalActions: legal
+  };
+}
+
+const STREET_LABEL_ARCHIVE = {
+  preflop: "翻牌前",
+  flop: "翻牌圈",
+  turn: "转牌圈",
+  river: "河牌圈",
+  showdown: "摊牌"
+};
+
+const SUIT_SYMBOL_ARCHIVE = { S: "♠", H: "♥", D: "♦", C: "♣" };
+
+function cardTextFromArchive(card) {
+  return `${card?.rank || ""}${SUIT_SYMBOL_ARCHIVE[card?.suit] || card?.suit || ""}`;
+}
+
+function inferArchivedAction(beforeState, afterState, playerId, message = "") {
+  const before = beforeState?.players?.find(player => player.id === playerId);
+  const after = afterState?.players?.find(player => player.id === playerId);
+  if (!before || !after) return null;
+  const beforeBet = Number(before.bet) || 0;
+  const afterBet = Number(after.bet) || 0;
+  const beforeStack = Number(before.stack) || 0;
+  const afterStack = Number(after.stack) || 0;
+  const label = after.lastAction || String(message).replace(/^你:\s*/, "");
+  if (after.folded && !before.folded) return { action: "fold", amount: 0, label };
+  if (afterBet > (Number(beforeState.currentBet) || 0)) {
+    return {
+      action: label.includes("全下") && afterStack === 0 && !label.includes("加注") ? "all-in" : "raise",
+      amount: afterBet,
+      label
+    };
+  }
+  if (afterBet > beforeBet || beforeStack > afterStack) return { action: "call", amount: 0, label };
+  return { action: "check", amount: 0, label };
+}
+
+function actionText(action) {
+  if (!action) return "未知";
+  if (action.action === "fold") return "弃牌";
+  if (action.action === "check") return "过牌";
+  if (action.action === "call") return "跟注";
+  if (action.action === "all-in") return "全下";
+  if (action.action === "raise") return `加注到 ${action.amount}`;
+  return action.action;
+}
+
+function judgeHumanAction(actual, solverDecision, legalActions) {
+  if (!actual || !solverDecision) {
+    return { grade: "unknown", label: "无法分析", detail: "缺少动作或 Solver 推荐。" };
+  }
+  const actualAction = actual.action === "all-in" && solverDecision.action === "raise" ? "raise" : actual.action;
+  const solverAction = solverDecision.action === "all-in" && actual.action === "raise" ? "raise" : solverDecision.action;
+  if (actualAction !== solverAction) {
+    const passiveMatch = ["check", "call"].includes(actualAction) && ["check", "call"].includes(solverAction);
+    if (!passiveMatch) {
+      return { grade: "bad", label: "偏离", detail: `Solver 推荐 ${actionText(solverDecision)}，你选择 ${actionText(actual)}。` };
+    }
+  }
+  if (actualAction === "raise" && solverAction === "raise") {
+    const target = Number(solverDecision.amount) || 0;
+    const actualAmount = Number(actual.amount) || 0;
+    const tolerance = Math.max(Number(legalActions?.toCall) || 0, Number(legalActions?.currentBet) || 0, 1) * 0.25;
+    if (Math.abs(actualAmount - target) > tolerance) {
+      return { grade: "warn", label: "尺度可疑", detail: `方向一致，但 Solver 推荐 ${target}，实际 ${actualAmount}。` };
+    }
+  }
+  return { grade: "good", label: "合理", detail: "动作方向与 Solver 推荐一致。" };
+}
+
+function humanActionEvents(archive) {
+  const events = [...(archive?.logs?.events || [])].sort(compareArchiveEventsAsc);
+  const points = [];
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index];
+    if (event?.type !== "game" || !String(event?.message || "").startsWith("你:")) continue;
+    const previous = events.slice(0, index).reverse().find(candidate => candidate?.state && handNumberFromState(candidate.state) === handNumberFromState(event.state));
+    if (!previous?.state || !event?.state) continue;
+    const actual = inferArchivedAction(previous.state, event.state, "human-1", event.message);
+    const visibleState = publicSolverStateFromArchiveState(previous.state, "human-1");
+    if (!actual || !visibleState) continue;
+    points.push({
+      id: `${event.handNumber || handNumberFromState(event.state)}-${event.sequence}`,
+      sequence: event.sequence,
+      at: event.at,
+      handNumber: handNumberFromState(event.state),
+      street: previous.state.street,
+      streetLabel: STREET_LABEL_ARCHIVE[previous.state.street] || previous.state.street,
+      actual,
+      visibleState
+    });
+  }
+  return points;
+}
+
+function compareArchiveEventsAsc(a, b) {
+  return (Number(a?.sequence) || 0) - (Number(b?.sequence) || 0)
+    || String(a?.at || "").localeCompare(String(b?.at || ""));
+}
+
+async function analyzeHumanActions(tableId, options = {}) {
+  const filePath = path.join(tableArchivePath(tableId), "table.json");
+  const tableArchive = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  const archive = rehydrateTableArchive(tableId, tableArchive);
+  const handNumber = Math.max(0, Number(options.handNumber) || 0);
+  const points = humanActionEvents(archive)
+    .filter(point => !handNumber || point.handNumber === handNumber);
+  const profileId = options.preflopRangeProfileId || archive?.settings?.preflopRangeProfileId || "";
+  const results = [];
+  for (const point of points) {
+    const result = await runTexasSolverDecision(point.visibleState, { preflopRangeProfileId: profileId });
+    if (result.error) {
+      results.push({
+        ...point,
+        grade: "unknown",
+        verdict: "无法分析",
+        verdictDetail: result.error,
+        solverDecision: null,
+        solverDebug: result.debug || null
+      });
+      continue;
+    }
+    const judgment = judgeHumanAction(point.actual, result.decision, point.visibleState.legalActions);
+    results.push({
+      ...point,
+      grade: judgment.grade,
+      verdict: judgment.label,
+      verdictDetail: judgment.detail,
+      solverDecision: result.decision,
+      solverDebug: result.debug || null
+    });
+  }
+  const counts = results.reduce((acc, item) => {
+    acc[item.grade] = (acc[item.grade] || 0) + 1;
+    return acc;
+  }, {});
+  return {
+    tableId,
+    handNumber: handNumber || null,
+    profileId,
+    generatedAt: new Date().toISOString(),
+    summary: {
+      total: results.length,
+      good: counts.good || 0,
+      warn: counts.warn || 0,
+      bad: counts.bad || 0,
+      unknown: counts.unknown || 0
+    },
+    results
+  };
+}
+
+function runTexasSolverDecision(payload, options = {}) {
   return new Promise(resolve => {
     if (payload?.table?.street === "preflop") {
-      resolve(runPreflopRangeDecision(payload));
+      resolve(runPreflopRangeDecision(payload, options));
       return;
     }
     const outputFile = path.join("resources", "outputs", `texassolver-${Date.now()}-${Math.random().toString(16).slice(2)}.json`);
@@ -1059,7 +1483,8 @@ function runTexasSolverDecision(payload) {
       postflopTimeoutMs,
       unsupportedReasons: solverRequest.unsupportedReasons,
       heroRange: solverRequest.heroRange,
-      exactHand: solverRequest.exactHand
+      exactHand: solverRequest.exactHand,
+      postflopThreadNum: solverRequest.threadNum
     };
 
     if (!solverRequest.supported) {
@@ -1182,7 +1607,16 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
   if (url.pathname === "/api/status") {
-    sendJson(res, 200, { ok: true, codex: await codexAvailable(), texasSolver: texasSolverAvailable() });
+    const codex = await codexStatus();
+    const texasSolver = texasSolverStatus();
+    sendJson(res, 200, {
+      ok: true,
+      codex: codex.connected,
+      texasSolver: texasSolver.connected,
+      codexStatus: codex,
+      texasSolverStatus: texasSolver,
+      preflopRangeProfiles: publicPreflopRangeProfiles()
+    });
     return;
   }
 
@@ -1229,11 +1663,27 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname.startsWith("/api/human-gto-analysis/") && req.method === "POST") {
+    try {
+      const tableId = decodeURIComponent(url.pathname.slice("/api/human-gto-analysis/".length));
+      const payload = JSON.parse((await readBody(req)) || "{}");
+      sendJson(res, 200, await analyzeHumanActions(tableId, {
+        handNumber: payload.handNumber,
+        preflopRangeProfileId: payload.preflopRangeProfileId
+      }));
+    } catch (error) {
+      sendJson(res, 502, { error: error.message || String(error) });
+    }
+    return;
+  }
+
   if (url.pathname === "/api/ai-decision" && req.method === "POST") {
     try {
       const payload = JSON.parse(await readBody(req));
       if (payload.provider === "texassolver") {
-        const result = await runTexasSolverDecision(payload.state);
+        const result = await runTexasSolverDecision(payload.state, {
+          preflopRangeProfileId: payload.preflopRangeProfileId
+        });
         if (result.error) {
           sendJson(res, 422, { error: result.error, debug: result.debug, provider: "texassolver" });
           return;

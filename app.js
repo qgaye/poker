@@ -49,10 +49,15 @@ const DEFAULT_AUDIO_CONFIG = {
 
 const els = {
   serverStatus: document.getElementById("serverStatus"),
+  codexStatus: document.getElementById("codexStatus"),
+  texasSolverStatus: document.getElementById("texasSolverStatus"),
+  codexStatusDetail: document.getElementById("codexStatusDetail"),
+  texasSolverStatusDetail: document.getElementById("texasSolverStatusDetail"),
   aiCount: document.getElementById("aiCount"),
   startingStack: document.getElementById("startingStack"),
   bigBlind: document.getElementById("bigBlind"),
   aiMode: document.getElementById("aiMode"),
+  preflopRangeProfile: document.getElementById("preflopRangeProfile"),
   soundToggleBtn: document.getElementById("soundToggleBtn"),
   musicToggleBtn: document.getElementById("musicToggleBtn"),
   effectsVolume: document.getElementById("effectsVolume"),
@@ -71,6 +76,9 @@ const els = {
   blindSummary: document.getElementById("blindSummary"),
   actionOrder: document.getElementById("actionOrder"),
   board: document.getElementById("board"),
+  nextHandPrompt: document.getElementById("nextHandPrompt"),
+  nextHandSummary: document.getElementById("nextHandSummary"),
+  tableNextHandBtn: document.getElementById("tableNextHandBtn"),
   seats: document.getElementById("seats"),
   turnTitle: document.getElementById("turnTitle"),
   turnHint: document.getElementById("turnHint"),
@@ -84,17 +92,32 @@ const els = {
   raisePointBtns: document.querySelectorAll(".raise-point"),
   raiseBtn: document.getElementById("raiseBtn"),
   allInBtn: document.getElementById("allInBtn"),
+  solverAdviceBtn: document.getElementById("solverAdviceBtn"),
+  humanSolverAdvice: document.getElementById("humanSolverAdvice"),
   actionPulse: document.getElementById("actionPulse"),
   logPanel: document.querySelector(".log-panel"),
   toggleReasonBtn: document.getElementById("toggleReasonBtn"),
   clearLogBtn: document.getElementById("clearLogBtn"),
   gameLog: document.getElementById("gameLog"),
-  aiLog: document.getElementById("aiLog")
+  aiLog: document.getElementById("aiLog"),
+  reviewTableSelect: document.getElementById("reviewTableSelect"),
+  reviewHandSelect: document.getElementById("reviewHandSelect"),
+  reviewCurrentBtn: document.getElementById("reviewCurrentBtn"),
+  reviewSelectedBtn: document.getElementById("reviewSelectedBtn"),
+  gtoReviewSummary: document.getElementById("gtoReviewSummary"),
+  gtoReviewResults: document.getElementById("gtoReviewResults")
+};
+
+const CONNECTION_DEFINITIONS = {
+  codex: "Codex 已连接标准：服务端可成功执行 codex --version。",
+  texasSolver: "TexasSolver 已连接标准：服务端可找到并执行 vendor/texassolver/TexasSolver-v0.2.0-MacOs/console_solver。"
 };
 
 let state = null;
 let serverHasCodex = false;
 let serverHasTexasSolver = false;
+let preflopRangeProfiles = [];
+let defaultPreflopRangeProfileId = "";
 let actionToken = 0;
 let showAnalysis = false;
 let tablePaused = true;
@@ -124,6 +147,9 @@ let runLogs = {
   events: []
 };
 let aiAnalysisRecords = [];
+let reviewArchiveCache = [];
+let reviewHandsCache = [];
+let humanSolverAdvice = null;
 
 function createDeck() {
   const deck = [];
@@ -294,6 +320,7 @@ function resetRunArchive(settings) {
     events: []
   };
   aiAnalysisRecords = [];
+  humanSolverAdvice = null;
 }
 
 function snapshotState() {
@@ -328,7 +355,8 @@ function buildTableArchive() {
     },
     settings: {
       ...(tableSettings || {}),
-      aiMode: els.aiMode.value
+      aiMode: els.aiMode.value,
+      preflopRangeProfileId: els.preflopRangeProfile.value || defaultPreflopRangeProfileId
     },
     players: state ? JSON.parse(JSON.stringify(state.players)) : [],
     currentState: snapshotState(),
@@ -387,6 +415,7 @@ async function sendTableArchiveSnapshot(archive) {
 
 function updateArchiveDisplay() {
   els.currentArchiveId.textContent = tableArchiveId || "--";
+  setReviewBusy(false);
 }
 
 function requestedTableId() {
@@ -414,6 +443,7 @@ async function loadArchiveList() {
     const response = await fetch("/api/table-archives");
     if (!response.ok) throw new Error("无法读取牌桌归档列表");
     const { archives } = await response.json();
+    reviewArchiveCache = Array.isArray(archives) ? archives : [];
     const currentValue = tableArchiveId || els.archiveSelect.value;
     els.archiveSelect.innerHTML = "";
     if (!archives.length) {
@@ -422,6 +452,8 @@ async function loadArchiveList() {
       option.textContent = "暂无可导入牌桌";
       els.archiveSelect.append(option);
       els.importTableBtn.disabled = true;
+      syncReviewTableOptions([]);
+      setReviewBusy(false);
       return;
     }
     for (const archive of archives) {
@@ -432,9 +464,14 @@ async function loadArchiveList() {
     }
     els.archiveSelect.value = archives.some(archive => archive.id === currentValue) ? currentValue : archives[0].id;
     els.importTableBtn.disabled = false;
+    syncReviewTableOptions(archives);
+    setReviewBusy(false);
   } catch (error) {
+    reviewArchiveCache = [];
     els.archiveSelect.innerHTML = '<option value="">读取归档失败</option>';
     els.importTableBtn.disabled = true;
+    syncReviewTableOptions([]);
+    setReviewBusy(false);
     console.warn("Failed to load table archives", error);
   }
 }
@@ -613,12 +650,14 @@ function restoreSettings(settings) {
   if (settings.startingStack != null) els.startingStack.value = settings.startingStack;
   if (settings.bigBlind != null) els.bigBlind.value = settings.bigBlind;
   if (settings.aiMode) els.aiMode.value = settings.aiMode;
+  if (settings.preflopRangeProfileId != null) els.preflopRangeProfile.value = settings.preflopRangeProfileId;
 }
 
 async function importTableArchive(tableId) {
   if (!tableId) return false;
   try {
     window.clearTimeout(persistTimer);
+    humanSolverAdvice = null;
     const response = await fetch(`/api/table-archive/${encodeURIComponent(tableId)}`);
     if (!response.ok) throw new Error(`找不到牌桌 ${tableId}`);
     const archive = await response.json();
@@ -666,6 +705,195 @@ async function loadAiAnalysisArchive(tableId, fallback = null) {
   } catch {
     return fallback;
   }
+}
+
+function syncReviewTableOptions(archives) {
+  if (!els.reviewTableSelect) return;
+  const previousValue = els.reviewTableSelect.value || tableArchiveId || els.archiveSelect?.value || "";
+  els.reviewTableSelect.innerHTML = "";
+  if (!archives.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "暂无可复盘牌局";
+    els.reviewTableSelect.append(option);
+    renderReviewHandOptions([]);
+    return;
+  }
+  for (const archive of archives) {
+    const option = document.createElement("option");
+    option.value = archive.id;
+    option.textContent = `${archive.id} · 第 ${archive.handNumber} 手 · ${archive.status}`;
+    els.reviewTableSelect.append(option);
+  }
+  els.reviewTableSelect.value = archives.some(archive => archive.id === previousValue) ? previousValue : archives[0].id;
+  loadReviewHands(els.reviewTableSelect.value, els.reviewHandSelect?.value || "");
+}
+
+async function loadReviewHands(tableId, preferredHandNumber = "") {
+  reviewHandsCache = [];
+  if (!tableId) {
+    renderReviewHandOptions([]);
+    return;
+  }
+  els.reviewHandSelect.innerHTML = '<option value="">读取手牌中...</option>';
+  try {
+    const response = await fetch(`/api/table-archive/${encodeURIComponent(tableId)}`);
+    if (!response.ok) throw new Error("无法读取牌局手牌");
+    const archive = await response.json();
+    reviewHandsCache = Array.isArray(archive.hands) ? archive.hands : [];
+    const fallbackHand = preferredHandNumber || archive.currentHand?.handNumber || reviewHandsCache.at(-1)?.handNumber || "";
+    renderReviewHandOptions(reviewHandsCache, fallbackHand);
+  } catch (error) {
+    reviewHandsCache = [];
+    els.reviewHandSelect.innerHTML = '<option value="">读取手牌失败</option>';
+    setReviewBusy(false);
+  }
+}
+
+function renderReviewHandOptions(hands, preferredHandNumber = "") {
+  if (!els.reviewHandSelect) return;
+  els.reviewHandSelect.innerHTML = "";
+  if (!hands.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "暂无手牌";
+    els.reviewHandSelect.append(option);
+    setReviewBusy(false);
+    return;
+  }
+  for (const hand of hands) {
+    const handNumber = Number(hand.handNumber) || 0;
+    const option = document.createElement("option");
+    option.value = String(handNumber);
+    option.textContent = `第 ${handNumber} 手 · ${hand.status || "unknown"} · ${hand.eventCount || 0} 条记录`;
+    els.reviewHandSelect.append(option);
+  }
+  const preferred = String(preferredHandNumber || "");
+  els.reviewHandSelect.value = hands.some(hand => String(hand.handNumber) === preferred)
+    ? preferred
+    : String(hands.at(-1)?.handNumber || "");
+  setReviewBusy(false);
+}
+
+function useCurrentTableForReview() {
+  if (!tableArchiveId) {
+    renderGtoReviewError("当前没有可复盘的牌局。");
+    return;
+  }
+  if (els.reviewTableSelect) els.reviewTableSelect.value = tableArchiveId;
+  loadReviewHands(tableArchiveId, state?.handNumber || "");
+}
+
+async function runGtoReview() {
+  const tableId = els.reviewTableSelect?.value || "";
+  const handNumber = Number(els.reviewHandSelect?.value) || 0;
+  if (!tableId) {
+    renderGtoReviewError("请先选择要复盘的牌局。");
+    return;
+  }
+  if (!handNumber) {
+    renderGtoReviewError("请先选择要复盘的手牌。");
+    return;
+  }
+  setReviewBusy(true);
+  els.gtoReviewSummary.textContent = `正在分析 ${tableId} 的第 ${handNumber} 手，TexasSolver 可能需要一点时间...`;
+  els.gtoReviewResults.innerHTML = "";
+  try {
+    const response = await fetch(`/api/human-gto-analysis/${encodeURIComponent(tableId)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        handNumber,
+        preflopRangeProfileId: els.preflopRangeProfile.value || defaultPreflopRangeProfileId
+      })
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || "GTO 复盘失败");
+    renderGtoReview(body);
+  } catch (error) {
+    renderGtoReviewError(error.message || String(error));
+  } finally {
+    setReviewBusy(false);
+  }
+}
+
+function setReviewBusy(isBusy) {
+  if (els.reviewCurrentBtn) els.reviewCurrentBtn.disabled = isBusy || !tableArchiveId;
+  if (els.reviewSelectedBtn) els.reviewSelectedBtn.disabled = isBusy || !els.reviewTableSelect?.value || !els.reviewHandSelect?.value;
+  if (els.reviewTableSelect) els.reviewTableSelect.disabled = isBusy || !reviewArchiveCache.length;
+  if (els.reviewHandSelect) els.reviewHandSelect.disabled = isBusy || !reviewHandsCache.length;
+}
+
+function renderGtoReviewError(message) {
+  els.gtoReviewSummary.className = "review-summary error";
+  els.gtoReviewSummary.textContent = message;
+  els.gtoReviewResults.innerHTML = "";
+}
+
+function renderGtoReview(report) {
+  const summary = report.summary || {};
+  els.gtoReviewSummary.className = "review-summary";
+  if (!summary.total) {
+    els.gtoReviewSummary.textContent = `${report.tableId} · 第 ${report.handNumber || "--"} 手：没有找到你的行动点。`;
+    els.gtoReviewResults.innerHTML = "";
+    return;
+  }
+  els.gtoReviewSummary.innerHTML = `
+    <span>牌局 <strong>${escapeHtml(report.tableId)}</strong></span>
+    <span>手牌 <strong>第 ${escapeHtml(report.handNumber || "--")} 手</strong></span>
+    <span>行动点 <strong>${summary.total}</strong></span>
+    <span class="good">合理 <strong>${summary.good || 0}</strong></span>
+    <span class="warn">可疑 <strong>${summary.warn || 0}</strong></span>
+    <span class="bad">偏离 <strong>${summary.bad || 0}</strong></span>
+    <span>无法分析 <strong>${summary.unknown || 0}</strong></span>
+  `;
+  els.gtoReviewResults.innerHTML = (report.results || []).map(renderGtoReviewItem).join("");
+}
+
+function renderGtoReviewItem(item) {
+  const holeCards = item.visibleState?.player?.holeCards || [];
+  const board = item.visibleState?.table?.community || [];
+  const solver = item.solverDecision ? formatReviewDecision(item.solverDecision) : "未返回";
+  const actual = item.actual?.label || formatReviewDecision(item.actual);
+  const reasoning = item.solverDecision?.reasoning || item.verdictDetail || "";
+  const debug = item.solverDebug ? escapeHtml(JSON.stringify(compactSolverDebug(item.solverDebug), null, 2)) : "";
+  return `
+    <article class="review-card ${escapeHtml(item.grade || "unknown")}">
+      <div class="review-card-head">
+        <strong>第 ${escapeHtml(item.handNumber)} 手 · ${escapeHtml(item.streetLabel || item.street || "")}</strong>
+        <span>${escapeHtml(item.verdict || "无法分析")}</span>
+      </div>
+      <div class="review-grid">
+        <div><small>手牌</small><b>${escapeHtml(holeCards.join(" ") || "--")}</b></div>
+        <div><small>公共牌</small><b>${escapeHtml(board.join(" ") || "--")}</b></div>
+        <div><small>你的动作</small><b>${escapeHtml(actual)}</b></div>
+        <div><small>Solver 推荐</small><b>${escapeHtml(solver)}</b></div>
+      </div>
+      <p>${escapeHtml(reasoning)}</p>
+      ${debug ? `<details><summary>Solver 细节</summary><pre>${debug}</pre></details>` : ""}
+    </article>
+  `;
+}
+
+function formatReviewDecision(decision) {
+  if (!decision) return "未知";
+  if (decision.action === "fold") return "弃牌";
+  if (decision.action === "check") return "过牌";
+  if (decision.action === "call") return "跟注";
+  if (decision.action === "all-in") return "全下";
+  if (decision.action === "raise") return `加注到 ${Number(decision.amount) || 0}`;
+  return decision.label || decision.action || "未知";
+}
+
+function compactSolverDebug(debug) {
+  return {
+    provider: debug.provider,
+    selectedAction: debug.selectedAction,
+    heroRange: debug.heroRange,
+    exactHand: debug.exactHand,
+    fallbackReason: debug.fallbackReason,
+    parsedOutput: debug.parsedOutput
+  };
 }
 
 function escapeHtml(value) {
@@ -808,7 +1036,8 @@ function setupTable() {
     startingStack,
     smallBlind,
     bigBlind,
-    aiMode: els.aiMode.value
+    aiMode: els.aiMode.value,
+    preflopRangeProfileId: els.preflopRangeProfile.value || defaultPreflopRangeProfileId
   });
   const players = [
     makePlayer("human-1", "你", "human", startingStack),
@@ -864,6 +1093,7 @@ function startHand() {
   }
   state.winners = [];
   state.actionToken = ++actionToken;
+  humanSolverAdvice = null;
   const livePlayers = state.players.filter(player => player.stack > 0);
   if (livePlayers.length < 2) {
     gameLog("牌局结束：只剩一名玩家有筹码");
@@ -959,6 +1189,7 @@ function applyAction(player, decision) {
   let action = decision.action;
   let amount = Number(decision.amount) || 0;
   const beforeBet = player.bet;
+  if (player.type === "human") humanSolverAdvice = null;
 
   if (action === "check" && !legal.canCheck) action = legal.canCall ? "call" : "fold";
   if (action === "call" && !legal.canCall) action = legal.canCheck ? "check" : "fold";
@@ -1280,6 +1511,7 @@ function render(shouldPersist = true) {
   renderBlindSummary();
   renderActionOrder();
   renderBoard();
+  renderNextHandPrompt();
   renderSeats();
   renderActions();
   if (shouldPersist) queuePersistTable();
@@ -1288,6 +1520,7 @@ function render(shouldPersist = true) {
 function renderEmptyTable(message) {
   state = null;
   tableArchiveId = "";
+  humanSolverAdvice = null;
   updateArchiveDisplay();
   els.potTotal.textContent = "0";
   els.currentBet.textContent = "0";
@@ -1295,6 +1528,7 @@ function renderEmptyTable(message) {
   els.actionOrder.innerHTML = '<span class="order-title">行动顺序</span><span class="order-empty">等待牌桌</span>';
   els.board.innerHTML = "";
   for (let i = 0; i < 5; i++) els.board.append(emptyCardNode());
+  if (els.nextHandPrompt) els.nextHandPrompt.hidden = true;
   els.seats.innerHTML = "";
   els.turnTitle.textContent = "未加载牌桌";
   els.turnHint.textContent = message;
@@ -1304,6 +1538,9 @@ function renderEmptyTable(message) {
   els.checkCallBtn.disabled = true;
   els.raiseBtn.disabled = true;
   els.allInBtn.disabled = true;
+  els.solverAdviceBtn.disabled = true;
+  els.humanSolverAdvice.className = "solver-advice empty";
+  els.humanSolverAdvice.textContent = "轮到你行动时可请求 TexasSolver 建议。";
   els.raiseAmount.disabled = true;
   els.raiseAmountInput.disabled = true;
   els.raiseMultipleBtns.forEach(button => { button.disabled = true; });
@@ -1313,10 +1550,15 @@ function renderEmptyTable(message) {
 
 function renderTableFlow() {
   updateArchiveDisplay();
+  els.newHandBtn.disabled = !canStartNextHand();
   els.tableFlowBtn.textContent = tablePaused ? "开始牌桌" : "暂停牌桌";
   els.tableFlowBtn.classList.toggle("paused", tablePaused);
   els.flowControl.classList.toggle("paused", tablePaused);
   els.flowStatusText.textContent = tablePaused ? "已暂停" : "运行中";
+}
+
+function canStartNextHand() {
+  return Boolean(state && state.street === "showdown" && state.players.filter(player => player.stack > 0).length >= 2);
 }
 
 function blindIndexes() {
@@ -1387,6 +1629,30 @@ function renderBoard() {
     const card = state.community[i];
     els.board.append(card ? cardNode(card) : emptyCardNode());
   }
+}
+
+function renderNextHandPrompt() {
+  if (!els.nextHandPrompt) return;
+  const canContinue = canStartNextHand();
+  els.nextHandPrompt.hidden = state.street !== "showdown";
+  els.nextHandPrompt.classList.toggle("is-final", state.street === "showdown" && !canContinue);
+  els.nextHandSummary.textContent = nextHandSummaryText(canContinue);
+  els.tableNextHandBtn.disabled = !canContinue;
+}
+
+function nextHandSummaryText(canContinue) {
+  if (!state.winners.length) return canContinue ? "本手结束" : "牌局结束";
+  const totals = new Map();
+  for (const award of state.winners) {
+    totals.set(award.playerId, (totals.get(award.playerId) || 0) + award.amount);
+  }
+  const winners = [...totals.entries()].map(([playerId, amount]) => {
+    const player = state.players.find(candidate => candidate.id === playerId);
+    return `${player?.name || "玩家"} 赢得 ${amount}`;
+  });
+  const summary = winners.slice(0, 2).join("，");
+  const suffix = winners.length > 2 ? ` 等 ${winners.length} 人` : "";
+  return `${summary}${suffix}${canContinue ? "" : "，牌局结束"}`;
 }
 
 function renderSeats() {
@@ -1471,6 +1737,7 @@ function renderActions() {
   const player = activePlayer();
   const humanTurn = player && player.type === "human" && state.street !== "showdown" && !state.waiting && !tablePaused;
   const legal = player ? legalActions(player) : null;
+  const adviceLoading = humanSolverAdvice?.status === "loading" && isCurrentHumanAdviceContext(humanSolverAdvice.context);
   renderActionPulse();
   els.turnTitle.textContent = state.street === "showdown"
     ? "本手结束"
@@ -1487,7 +1754,10 @@ function renderActions() {
   els.checkCallBtn.disabled = !humanTurn || (!legal.canCheck && !legal.canCall);
   els.raiseBtn.disabled = !humanTurn || !legal.canRaise;
   els.allInBtn.disabled = !humanTurn || !legal.canAllIn;
+  els.solverAdviceBtn.disabled = !humanTurn || !serverHasTexasSolver || adviceLoading;
+  els.solverAdviceBtn.textContent = adviceLoading ? "分析中..." : "TexasSolver 建议";
   els.checkCallBtn.textContent = legal?.canCheck ? "过牌" : `跟注 ${legal?.toCall || 0}`;
+  renderHumanSolverAdvice(humanTurn);
 
   const min = legal?.canRaise ? legal.minRaiseTo : 0;
   const max = legal?.canRaise ? legal.maxTotal : 0;
@@ -1502,6 +1772,44 @@ function renderActions() {
   els.raiseMultipleBtns.forEach(button => { button.disabled = !humanTurn || !legal.canRaise; });
   els.raisePointBtns.forEach(button => { button.disabled = !humanTurn || !legal.canRaise; });
   syncRaisePointState(legal);
+}
+
+function renderHumanSolverAdvice(humanTurn) {
+  if (!els.humanSolverAdvice) return;
+  if (!humanTurn) {
+    els.humanSolverAdvice.className = "solver-advice empty";
+    els.humanSolverAdvice.textContent = "轮到你行动时可请求 TexasSolver 建议。";
+    return;
+  }
+  if (!humanSolverAdvice || (humanSolverAdvice.context && !isCurrentHumanAdviceContext(humanSolverAdvice.context))) {
+    els.humanSolverAdvice.className = "solver-advice empty";
+    els.humanSolverAdvice.textContent = serverHasTexasSolver
+      ? "点击 TexasSolver 建议，查看当前行动点的策略选择。"
+      : "TexasSolver 未连接，无法给出实时建议。";
+    return;
+  }
+  if (humanSolverAdvice.status === "loading") {
+    els.humanSolverAdvice.className = "solver-advice loading";
+    els.humanSolverAdvice.textContent = humanSolverAdvice.message || "TexasSolver 正在分析当前行动点...";
+    return;
+  }
+  if (humanSolverAdvice.status === "error") {
+    els.humanSolverAdvice.className = "solver-advice error";
+    els.humanSolverAdvice.textContent = humanSolverAdvice.message || "TexasSolver 建议失败。";
+    return;
+  }
+  const decision = humanSolverAdvice.decision || null;
+  const reasoning = decision?.reasoning || "TexasSolver 未返回说明。";
+  const debug = humanSolverAdvice.debug ? escapeHtml(JSON.stringify(compactSolverDebug(humanSolverAdvice.debug), null, 2)) : "";
+  els.humanSolverAdvice.className = "solver-advice ready";
+  els.humanSolverAdvice.innerHTML = `
+    <div class="solver-advice-main">
+      <span>TexasSolver 推荐</span>
+      <strong>${escapeHtml(formatReviewDecision(decision))}</strong>
+    </div>
+    <p>${escapeHtml(reasoning)}</p>
+    ${debug ? `<details><summary>策略细节</summary><pre>${debug}</pre></details>` : ""}
+  `;
 }
 
 function renderRaiseTicks(legal) {
@@ -1616,6 +1924,89 @@ function isCurrentAiTurn(context) {
   );
 }
 
+function currentHumanAdviceContext(player) {
+  return {
+    archiveId: tableArchiveId,
+    handNumber: state.handNumber,
+    token: state.actionToken,
+    playerId: player.id,
+    street: state.street,
+    currentBet: state.currentBet,
+    playerBet: player.bet,
+    playerStack: player.stack,
+    communityCount: state.community.length,
+    preflopActionCount: state.preflopActions.length
+  };
+}
+
+function isCurrentHumanAdviceContext(context) {
+  const player = activePlayer();
+  return Boolean(
+    state
+    && !tablePaused
+    && !state.waiting
+    && tableArchiveId === context?.archiveId
+    && state.handNumber === context?.handNumber
+    && state.actionToken === context?.token
+    && state.street === context?.street
+    && state.currentBet === context?.currentBet
+    && state.community.length === context?.communityCount
+    && state.preflopActions.length === context?.preflopActionCount
+    && player
+    && player.id === context?.playerId
+    && player.type === "human"
+    && player.bet === context?.playerBet
+    && player.stack === context?.playerStack
+    && state.street !== "showdown"
+  );
+}
+
+async function requestHumanSolverAdvice() {
+  const player = activePlayer();
+  const humanTurn = player && player.type === "human" && state.street !== "showdown" && !state.waiting && !tablePaused;
+  if (!humanTurn) return;
+  if (!serverHasTexasSolver) {
+    humanSolverAdvice = { status: "error", message: "TexasSolver 未连接，暂时无法给出建议。" };
+    render(false);
+    return;
+  }
+  const context = currentHumanAdviceContext(player);
+  const visibleState = publicAiState(player);
+  humanSolverAdvice = { status: "loading", context, message: "TexasSolver 正在分析当前行动点..." };
+  render(false);
+  try {
+    const response = await fetch("/api/ai-decision", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: "texassolver",
+        state: visibleState,
+        preflopRangeProfileId: els.preflopRangeProfile.value || defaultPreflopRangeProfileId
+      })
+    });
+    const body = await response.json();
+    if (!isCurrentHumanAdviceContext(context)) return;
+    if (!response.ok) throw new Error(body.error || "TexasSolver 建议失败");
+    humanSolverAdvice = {
+      status: "ready",
+      context,
+      visibleState,
+      decision: body.decision,
+      debug: {
+        ...(body.debug || {}),
+        provider: "texassolver",
+        visibleState,
+        parsedOutput: body.debug?.parsedOutput || body.decision || null
+      }
+    };
+  } catch (error) {
+    if (isCurrentHumanAdviceContext(context)) {
+      humanSolverAdvice = { status: "error", context, message: error.message || String(error) };
+    }
+  }
+  render(false);
+}
+
 async function getAiDecision(player, requestContext) {
   const mode = els.aiMode.value;
   if (mode === "texassolver" && serverHasTexasSolver) {
@@ -1624,7 +2015,11 @@ async function getAiDecision(player, requestContext) {
       const response = await fetch("/api/ai-decision", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: "texassolver", state: visibleState })
+        body: JSON.stringify({
+          provider: "texassolver",
+          state: visibleState,
+          preflopRangeProfileId: els.preflopRangeProfile.value || defaultPreflopRangeProfileId
+        })
       });
       if (!response.ok) {
         const body = await response.json();
@@ -1863,8 +2258,51 @@ function humanAction(action) {
   });
 }
 
+function handleNextHandClick() {
+  primeAudio();
+  if (!canStartNextHand()) return;
+  startHand();
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function updatePreflopRangeProfileOptions(profilePayload) {
+  if (!els.preflopRangeProfile) return;
+  const previousValue = els.preflopRangeProfile.value;
+  defaultPreflopRangeProfileId = profilePayload?.defaultProfileId || "";
+  preflopRangeProfiles = Array.isArray(profilePayload?.profiles) ? profilePayload.profiles : [];
+  els.preflopRangeProfile.innerHTML = "";
+  for (const profile of preflopRangeProfiles) {
+    const option = document.createElement("option");
+    option.value = profile.id;
+    option.textContent = `${profile.label}${profile.available ? "" : "（未找到）"}`;
+    option.disabled = !profile.available;
+    els.preflopRangeProfile.append(option);
+  }
+  if (!preflopRangeProfiles.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "未配置 Range";
+    els.preflopRangeProfile.append(option);
+  }
+
+  const values = preflopRangeProfiles.map(profile => profile.id);
+  const restoredValue = previousValue || tableSettings?.preflopRangeProfileId || defaultPreflopRangeProfileId;
+  els.preflopRangeProfile.value = values.includes(restoredValue) ? restoredValue : (defaultPreflopRangeProfileId || values[0] || "");
+}
+
+function updateConnectionStatus(element, label, isConnected, connectedDefinition, detailElement = null, status = null) {
+  if (!element) return;
+  const stateText = isConnected ? "已连接" : "未连接";
+  const message = status?.message ? `当前检查：${status.message}` : `当前状态：${stateText}`;
+  element.textContent = `${label} ${stateText}`;
+  element.className = `status-pill ${isConnected ? "ok" : "warn"}`;
+  element.title = `${connectedDefinition}\n${message}`;
+  if (detailElement) {
+    detailElement.textContent = `${connectedDefinition.replace(/。$/, "")}；${message}`;
+  }
 }
 
 async function checkServer() {
@@ -1873,30 +2311,61 @@ async function checkServer() {
     const body = await response.json();
     serverHasCodex = Boolean(body.codex);
     serverHasTexasSolver = Boolean(body.texasSolver);
-    els.serverStatus.textContent = serverHasTexasSolver
-      ? "TexasSolver 已连接"
-      : serverHasCodex
-        ? "Codex 已连接"
-        : "服务在线，无外部 AI";
-    els.serverStatus.className = `status-pill ${serverHasTexasSolver || serverHasCodex ? "ok" : "warn"}`;
+    updatePreflopRangeProfileOptions(body.preflopRangeProfiles);
+    updateConnectionStatus(
+      els.codexStatus,
+      "Codex",
+      serverHasCodex,
+      CONNECTION_DEFINITIONS.codex,
+      els.codexStatusDetail,
+      body.codexStatus
+    );
+    updateConnectionStatus(
+      els.texasSolverStatus,
+      "TexasSolver",
+      serverHasTexasSolver,
+      CONNECTION_DEFINITIONS.texasSolver,
+      els.texasSolverStatusDetail,
+      body.texasSolverStatus
+    );
     if (els.aiMode.value === "texassolver" && !serverHasTexasSolver) {
-      els.serverStatus.textContent = "TexasSolver 未连接";
+      updateConnectionStatus(
+        els.texasSolverStatus,
+        "TexasSolver",
+        false,
+        CONNECTION_DEFINITIONS.texasSolver,
+        els.texasSolverStatusDetail,
+        body.texasSolverStatus
+      );
     } else if (els.aiMode.value === "codex" && !serverHasCodex) {
       els.aiMode.value = serverHasTexasSolver ? "texassolver" : "local";
     }
   } catch {
     serverHasCodex = false;
     serverHasTexasSolver = false;
-    els.serverStatus.textContent = "静态模式";
-    els.serverStatus.className = "status-pill warn";
+    updateConnectionStatus(els.codexStatus, "Codex", false, CONNECTION_DEFINITIONS.codex, els.codexStatusDetail, {
+      message: "无法访问 /api/status"
+    });
+    updateConnectionStatus(els.texasSolverStatus, "TexasSolver", false, CONNECTION_DEFINITIONS.texasSolver, els.texasSolverStatusDetail, {
+      message: "无法访问 /api/status"
+    });
   }
 }
 
 els.newTableBtn.addEventListener("click", setupTable);
-els.newHandBtn.addEventListener("click", startHand);
+els.newHandBtn.addEventListener("click", handleNextHandClick);
+els.tableNextHandBtn.addEventListener("click", handleNextHandClick);
 els.importTableBtn.addEventListener("click", () => importTableArchive(els.archiveSelect.value));
+els.reviewTableSelect.addEventListener("change", () => loadReviewHands(els.reviewTableSelect.value));
+els.reviewHandSelect.addEventListener("change", () => setReviewBusy(false));
+els.reviewCurrentBtn.addEventListener("click", useCurrentTableForReview);
+els.reviewSelectedBtn.addEventListener("click", runGtoReview);
 els.aiMode.addEventListener("change", () => {
   if (tableSettings) tableSettings.aiMode = els.aiMode.value;
+  queuePersistTable();
+});
+els.preflopRangeProfile.addEventListener("change", () => {
+  if (tableSettings) tableSettings.preflopRangeProfileId = els.preflopRangeProfile.value;
   queuePersistTable();
 });
 els.soundToggleBtn.addEventListener("click", () => {
@@ -1952,6 +2421,10 @@ els.raiseBtn.addEventListener("click", () => {
 els.allInBtn.addEventListener("click", () => {
   primeAudio();
   humanAction("all-in");
+});
+els.solverAdviceBtn.addEventListener("click", () => {
+  primeAudio();
+  requestHumanSolverAdvice();
 });
 els.raiseAmount.addEventListener("input", () => {
   setRaiseAmount(Number(els.raiseAmount.value));
