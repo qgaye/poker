@@ -435,26 +435,71 @@ function runCodexExec(prompt, { timeoutMs = 25_000 } = {}) {
   });
 }
 
+function runCodexVersion({ timeoutMs = 5_000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const command = codexCommand();
+    const child = spawn(command, ["--version"], { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const finish = callback => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      callback();
+    };
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      const error = new Error("Codex --version 超时");
+      error.code = "ETIMEDOUT";
+      finish(() => reject(error));
+    }, timeoutMs);
+    child.stdout.on("data", chunk => { stdout += chunk.toString(); });
+    child.stderr.on("data", chunk => { stderr += chunk.toString(); });
+    child.on("error", error => {
+      finish(() => reject(error));
+    });
+    child.on("close", code => {
+      finish(() => {
+        if (code !== 0) {
+          const error = new Error(stderr.trim() || `Codex --version 退出码 ${code}`);
+          error.code = "EEXITNONZERO";
+          reject(error);
+          return;
+        }
+        resolve({ command, stdout, stderr });
+      });
+    });
+  });
+}
+
+function parseCodexVersion(stdout) {
+  // 输出可能含 "WARNING: ..." 等前置行，取第一行匹配到的版本号即可
+  const lines = String(stdout || "").split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  for (const line of lines) {
+    const match = line.match(/(?:codex(?:-cli)?\s+)?v?(\d[\w.\-+]*)/i);
+    if (match) return match[1];
+  }
+  return "";
+}
+
 async function codexStatus() {
-  const standard = "服务端可完成一次 codex exec JSON 探针调用";
-  const prompt = [
-    "Return exactly one JSON object for a poker action health check.",
-    "Use action check, amount 0, and reasoning ok."
-  ].join("\n");
+  const standard = "服务端可执行 codex --version 并返回版本号";
   try {
-    const result = await runCodexExec(prompt, { timeoutMs: 35_000 });
-    JSON.parse(result.raw);
+    const result = await runCodexVersion();
+    const version = parseCodexVersion(result.stdout) || parseCodexVersion(result.stderr);
     return {
       connected: true,
       standard,
-      command: `${result.command} exec`,
-      message: "codex exec 探针调用成功"
+      command: `${result.command} --version`,
+      message: version ? `codex --version: ${version}` : "codex --version 调用成功",
+      version: version || null
     };
   } catch (error) {
     return {
       connected: false,
       standard,
-      command: `${codexCommand()} exec`,
+      command: `${codexCommand()} --version`,
       message: error.code === "ENOENT"
         ? "服务端找不到可执行的 codex"
         : error.message
@@ -466,9 +511,9 @@ function timeoutStatus(label, timeoutMs) {
   return new Promise(resolve => {
     setTimeout(() => resolve({
       connected: false,
-      standard: "服务端可完成一次 codex exec JSON 探针调用",
-      command: `${codexCommand()} exec`,
-      message: `${label} 检测超时，后台决策时会再次尝试`
+      standard: "服务端可执行 codex --version 并返回版本号",
+      command: `${codexCommand()} --version`,
+      message: `${label} 版本探测超时，后台决策时会再次尝试`
     }), timeoutMs);
   });
 }

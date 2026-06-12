@@ -121,12 +121,12 @@
                     <strong id="currentBet">0</strong>
                   </div>
                 </div>
-                <div class="next-hand-prompt" id="nextHandPrompt" hidden>
-                  <span id="nextHandSummary">本手结束</span>
-                  <button id="tableNextHandBtn" type="button">下一手</button>
-                </div>
               </div>
               <div class="seat-grid" id="seats"></div>
+              <div class="next-hand-prompt" id="nextHandPrompt" hidden>
+                <span id="nextHandSummary">本手结束</span>
+                <button id="tableNextHandBtn" type="button">下一手</button>
+              </div>
             </div>
           </div>
         </section>
@@ -145,23 +145,25 @@
               <span>加注到</span>
               <input id="raiseAmountInput" type="number" min="0" value="0">
             </div>
-            <div class="raise-presets" aria-label="加注倍数">
-              <button type="button" class="raise-multiple" data-multiple="1">1x</button>
-              <button type="button" class="raise-multiple" data-multiple="2">2x</button>
-              <button type="button" class="raise-multiple" data-multiple="3">3x</button>
+            <div class="raise-presets" aria-label="大盲倍数（翻前常用）">
+              <button type="button" class="raise-multiple" data-multiple="2">2BB</button>
+              <button type="button" class="raise-multiple" data-multiple="2.5">2.5BB</button>
+              <button type="button" class="raise-multiple" data-multiple="3">3BB</button>
+              <button type="button" class="raise-multiple" data-multiple="4">4BB</button>
             </div>
             <input id="raiseAmount" type="range" min="0" max="0" value="0" list="raiseTicks">
             <datalist id="raiseTicks">
-              <option value="10" label="10%"></option>
-              <option value="30" label="30%"></option>
-              <option value="50" label="50%"></option>
-              <option value="80" label="80%"></option>
+              <option value="33" label="1/3"></option>
+              <option value="50" label="1/2"></option>
+              <option value="66" label="2/3"></option>
+              <option value="100" label="Pot"></option>
             </datalist>
-            <div class="raise-points" aria-label="加注比例点位">
-              <button type="button" class="raise-point" data-percent="10">10%</button>
-              <button type="button" class="raise-point" data-percent="30">30%</button>
-              <button type="button" class="raise-point" data-percent="50">50%</button>
-              <button type="button" class="raise-point" data-percent="80">80%</button>
+            <div class="raise-points" aria-label="底池比例（翻后常用）">
+              <button type="button" class="raise-point" data-percent="33">1/3池</button>
+              <button type="button" class="raise-point" data-percent="50">1/2池</button>
+              <button type="button" class="raise-point" data-percent="66">2/3池</button>
+              <button type="button" class="raise-point" data-percent="100">满池</button>
+              <button type="button" class="raise-point" data-percent="150">1.5池</button>
             </div>
             <span id="raiseAmountLabel">0</span>
           </div>

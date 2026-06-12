@@ -109,7 +109,7 @@ const els = {
 };
 
 const CONNECTION_DEFINITIONS = {
-  codex: "Codex 已连接标准：服务端可完成一次 codex exec JSON 探针调用。",
+  codex: "Codex 已连接标准：服务端可执行 codex --version 并返回版本号。",
   texasSolver: "TexasSolver 已连接标准：服务端可找到并执行 vendor/texassolver/TexasSolver-v0.2.0-MacOs/console_solver。"
 };
 
@@ -1685,6 +1685,7 @@ function renderSeats() {
       index === smallBlindIndex ? "small-blind" : "",
       index === bigBlindIndex ? "big-blind" : "",
       player.folded ? "folded" : "",
+      player.out ? "eliminated" : "",
       state.winners.some(winner => winner.playerId === player.id) ? "winner" : ""
     ].filter(Boolean).join(" ");
     const badges = [];
@@ -1693,7 +1694,7 @@ function renderSeats() {
     if (index === smallBlindIndex) badges.push({ label: `小盲 ${state.smallBlind}`, className: "blind" });
     if (index === bigBlindIndex) badges.push({ label: `大盲 ${state.bigBlind}`, className: "blind" });
     if (player.allIn) badges.push({ label: "全下", className: "" });
-    if (player.out) badges.push({ label: "出局", className: "" });
+    if (player.out) badges.push({ label: "出局", className: "eliminated" });
     const thinkingSeconds = thinkingSecondsFor(player);
     const showCards = state.street === "showdown" || (player.type === "human" && !player.folded);
     seat.innerHTML = `
@@ -1814,6 +1815,8 @@ function renderHumanSolverAdvice(humanTurn) {
   const decision = humanSolverAdvice.decision || null;
   const reasoning = decision?.reasoning || "TexasSolver 未返回说明。";
   const debug = humanSolverAdvice.debug ? escapeHtml(JSON.stringify(compactSolverDebug(humanSolverAdvice.debug), null, 2)) : "";
+  const previousDetails = els.humanSolverAdvice.querySelector("details.strategy-details");
+  const detailsOpen = previousDetails ? previousDetails.open : false;
   els.humanSolverAdvice.className = "solver-advice ready";
   els.humanSolverAdvice.innerHTML = `
     <div class="solver-advice-main">
@@ -1821,14 +1824,14 @@ function renderHumanSolverAdvice(humanTurn) {
       <strong>${escapeHtml(formatReviewDecision(decision))}</strong>
     </div>
     <p>${escapeHtml(reasoning)}</p>
-    ${debug ? `<details><summary>策略细节</summary><pre>${debug}</pre></details>` : ""}
+    ${debug ? `<details class="strategy-details"${detailsOpen ? " open" : ""}><summary>策略细节</summary><pre>${debug}</pre></details>` : ""}
   `;
 }
 
 function renderRaiseTicks(legal) {
   if (!els.raiseTicks) return;
   els.raiseTicks.innerHTML = "";
-  for (const percent of [10, 30, 50, 80]) {
+  for (const percent of [33, 50, 66, 100]) {
     const option = document.createElement("option");
     option.value = legal?.canRaise ? raiseAmountByPercent(percent) : 0;
     option.label = `${percent}%`;
@@ -1853,8 +1856,11 @@ function raiseAmountByPercent(percent) {
   if (!player) return 0;
   const legal = legalActions(player);
   if (!legal.canRaise) return 0;
-  const span = legal.maxTotal - legal.minRaiseTo;
-  return legal.minRaiseTo + Math.round(span * (percent / 100));
+  // 底池比例下注：跟注后底池 = pot + toCall，加注金额 = 该底池 × percent
+  // raise-to = currentBet + (pot + toCall) × percent
+  const potAfterCall = totalPot() + legal.toCall;
+  const raiseTo = state.currentBet + Math.round(potAfterCall * (percent / 100));
+  return clamp(raiseTo, legal.minRaiseTo, legal.maxTotal);
 }
 
 function raiseAmountByMultiple(multiple) {
@@ -1862,7 +1868,12 @@ function raiseAmountByMultiple(multiple) {
   if (!player) return 0;
   const legal = legalActions(player);
   if (!legal.canRaise) return 0;
-  return state.currentBet + state.minRaise * multiple;
+  // 翻前 BB 倍数：raise-to = bigBlind × multiple
+  // 翻后退化为：当前下注 + minRaise × multiple，保持原有手感
+  const target = state.street === "preflop"
+    ? Math.round(state.bigBlind * multiple)
+    : state.currentBet + Math.round(state.minRaise * multiple);
+  return clamp(target, legal.minRaiseTo, legal.maxTotal);
 }
 
 function syncRaisePointState(legal) {
