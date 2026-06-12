@@ -7,6 +7,7 @@
       "label": "TexasSolver 6-max",
       "type": "texassolver-tree",
       "seatCount": 6,
+      "seatCounts": [2, 3, 4, 5, 6],
       "root": "vendor/texassolver/TexasSolver-v0.2.0-MacOs/ranges/6max_range",
       "defaultOpenSizesBb": {
         "UTG": 2.5,
@@ -21,6 +22,7 @@
       "label": "Sklansky Tight 6-max",
       "type": "simple-hand-list",
       "seatCount": 6,
+      "seatCounts": [2, 3, 4, 5, 6],
       "source": "Sklansky starting-hand groups summarized on https://en.wikipedia.org/wiki/Texas_hold_%27em_starting_hands",
       "defaultOpenSizesBb": {
         "UTG": 2.5,
@@ -56,6 +58,7 @@
       "label": "PokerRoom EV Balanced 6-max",
       "type": "simple-hand-list",
       "seatCount": 6,
+      "seatCounts": [2, 3, 4, 5, 6],
       "source": "PokerRoom expected-value tiers summarized on https://en.wikipedia.org/wiki/Texas_hold_%27em_starting_hands",
       "defaultOpenSizesBb": {
         "UTG": 2.3,
@@ -91,6 +94,7 @@
       "label": "Chen Loose 6-max",
       "type": "simple-hand-list",
       "seatCount": 6,
+      "seatCounts": [2, 3, 4, 5, 6],
       "source": "Chen Formula summarized on https://en.wikipedia.org/wiki/Texas_hold_%27em_starting_hands",
       "defaultOpenSizesBb": {
         "UTG": 2.2,

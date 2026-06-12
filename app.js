@@ -109,7 +109,7 @@ const els = {
 };
 
 const CONNECTION_DEFINITIONS = {
-  codex: "Codex 已连接标准：服务端可成功执行 codex --version。",
+  codex: "Codex 已连接标准：服务端可完成一次 codex exec JSON 探针调用。",
   texasSolver: "TexasSolver 已连接标准：服务端可找到并执行 vendor/texassolver/TexasSolver-v0.2.0-MacOs/console_solver。"
 };
 
@@ -1121,12 +1121,13 @@ function startHand() {
     player.lastAction = player.out ? "淘汰" : "";
   }
 
-  const sbIndex = nextSeat(state.dealerIndex);
+  const liveCount = state.players.filter(player => !player.out).length;
+  const sbIndex = liveCount === 2 ? state.dealerIndex : nextSeat(state.dealerIndex);
   const bbIndex = nextSeat(sbIndex);
   postBlind(sbIndex, state.smallBlind, "小盲");
   postBlind(bbIndex, state.bigBlind, "大盲");
   state.currentBet = Math.max(...state.players.map(player => player.bet));
-  state.activeIndex = nextSeat(bbIndex);
+  state.activeIndex = liveCount === 2 ? sbIndex : nextSeat(bbIndex);
   gameLog(`第 ${state.handNumber} 手开始，庄位 ${state.players[state.dealerIndex].name}`);
   render();
   maybeRunAi();
@@ -1149,9 +1150,21 @@ function postBlind(index, amount, label) {
 }
 
 function tablePosition(index) {
-  if (!state || state.players.length !== 6) return "";
-  const offset = (index - state.dealerIndex + state.players.length) % state.players.length;
-  return ["BTN", "SB", "BB", "UTG", "MP", "CO"][offset] || "";
+  if (!state || index < 0 || state.players[index]?.out) return "";
+  const liveIndexes = [];
+  for (let step = 0; step < state.players.length; step += 1) {
+    const candidate = (state.dealerIndex + step + state.players.length) % state.players.length;
+    if (!state.players[candidate]?.out) liveIndexes.push(candidate);
+  }
+  const offset = liveIndexes.indexOf(index);
+  const labelsBySeatCount = {
+    2: ["SB", "BB"],
+    3: ["BTN", "SB", "BB"],
+    4: ["BTN", "SB", "BB", "CO"],
+    5: ["BTN", "SB", "BB", "UTG", "CO"],
+    6: ["BTN", "SB", "BB", "UTG", "MP", "CO"]
+  };
+  return labelsBySeatCount[liveIndexes.length]?.[offset] || "";
 }
 
 function commitChips(player, amount) {

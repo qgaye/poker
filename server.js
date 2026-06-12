@@ -10,6 +10,7 @@ const dataRoot = path.join(root, "data");
 const texasSolverDir = path.join(root, "vendor", "texassolver", "TexasSolver-v0.2.0-MacOs");
 const texasSolverBin = path.join(texasSolverDir, "console_solver");
 const texasSolverConfigPath = path.join(root, "config", "texassolver.json");
+const bundledCodexBin = "/Applications/Codex.app/Contents/Resources/codex";
 const rangeCache = new Map();
 const mime = {
   ".html": "text/html; charset=utf-8",
@@ -357,32 +358,118 @@ function listTableArchives() {
     .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
 }
 
-function codexStatus() {
-  return new Promise(resolve => {
-    const child = spawn("codex", ["--version"], { stdio: ["ignore", "pipe", "pipe"] });
+function codexCommand() {
+  if (process.env.CODEX_BIN) return process.env.CODEX_BIN;
+  try {
+    fs.accessSync(bundledCodexBin, fs.constants.X_OK);
+    return bundledCodexBin;
+  } catch {
+    return "codex";
+  }
+}
+
+function codexExecArgs(outputFile) {
+  return [
+    "exec",
+    "--skip-git-repo-check",
+    "--ephemeral",
+    "--sandbox",
+    "read-only",
+    "--json",
+    "--output-schema",
+    path.join(root, "codex-decision.schema.json"),
+    "-o",
+    outputFile,
+    "-"
+  ];
+}
+
+function runCodexExec(prompt, { timeoutMs = 25_000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const outFile = path.join(os.tmpdir(), `poker-codex-${Date.now()}-${Math.random().toString(16).slice(2)}.json`);
+    const command = codexCommand();
+    const child = spawn(command, codexExecArgs(outFile), { cwd: root, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
-    child.stdout.on("data", chunk => { stdout += chunk; });
-    child.stderr.on("data", chunk => { stderr += chunk; });
-    child.on("close", code => {
-      const output = `${stdout}${stderr}`.trim();
-      resolve({
-        connected: code === 0,
-        standard: "服务端可成功执行 codex --version",
-        command: "codex --version",
-        message: code === 0
-          ? (output.split("\n").at(-1) || "codex --version 成功")
-          : `codex --version 退出码 ${code}`
+    let settled = false;
+    const finish = callback => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      callback();
+    };
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      finish(() => reject(new Error("Codex exec timed out")));
+    }, timeoutMs);
+
+    child.stdout.on("data", chunk => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", chunk => {
+      stderr += chunk.toString();
+    });
+    child.on("error", error => {
+      finish(() => {
+        fs.rmSync(outFile, { force: true });
+        reject(error);
       });
     });
-    child.on("error", error => resolve({
+    child.on("close", code => {
+      finish(() => {
+        if (code !== 0) {
+          fs.rmSync(outFile, { force: true });
+          reject(new Error(stderr.trim() || `Codex exited with ${code}`));
+          return;
+        }
+        try {
+          const raw = fs.readFileSync(outFile, "utf8").trim();
+          fs.rmSync(outFile, { force: true });
+          resolve({ command, prompt, raw, stdout, stderr });
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    child.stdin.end(prompt);
+  });
+}
+
+async function codexStatus() {
+  const standard = "服务端可完成一次 codex exec JSON 探针调用";
+  const prompt = [
+    "Return exactly one JSON object for a poker action health check.",
+    "Use action check, amount 0, and reasoning ok."
+  ].join("\n");
+  try {
+    const result = await runCodexExec(prompt, { timeoutMs: 35_000 });
+    JSON.parse(result.raw);
+    return {
+      connected: true,
+      standard,
+      command: `${result.command} exec`,
+      message: "codex exec 探针调用成功"
+    };
+  } catch (error) {
+    return {
       connected: false,
-      standard: "服务端可成功执行 codex --version",
-      command: "codex --version",
+      standard,
+      command: `${codexCommand()} exec`,
       message: error.code === "ENOENT"
-        ? "服务端 PATH 中找不到 codex 命令"
+        ? "服务端找不到可执行的 codex"
         : error.message
-    }));
+    };
+  }
+}
+
+function timeoutStatus(label, timeoutMs) {
+  return new Promise(resolve => {
+    setTimeout(() => resolve({
+      connected: false,
+      standard: "服务端可完成一次 codex exec JSON 探针调用",
+      command: `${codexCommand()} exec`,
+      message: `${label} 检测超时，后台决策时会再次尝试`
+    }), timeoutMs);
   });
 }
 
@@ -432,19 +519,33 @@ function absoluteConfigPath(value) {
   return path.isAbsolute(value) ? value : path.join(root, value);
 }
 
+function supportedSeatCounts(profile) {
+  const configured = Array.isArray(profile?.seatCounts) ? profile.seatCounts : [];
+  const parsed = configured
+    .map(value => Math.floor(Number(value)))
+    .filter(value => value >= 2 && value <= 6);
+  if (parsed.length) return [...new Set(parsed)].sort((a, b) => a - b);
+
+  const maxSeats = Math.min(6, Math.max(2, Math.floor(Number(profile?.seatCount) || 6)));
+  return Array.from({ length: maxSeats - 1 }, (_item, index) => index + 2);
+}
+
 function configuredPreflopRangeProfiles() {
   const config = loadTexasSolverConfig();
   const profileList = Array.isArray(config.preflopRangeProfiles) ? config.preflopRangeProfiles : [];
   const profiles = profileList
     .filter(profile => profile?.id && (profile?.root || profile?.type === "simple-hand-list"))
-    .map(profile => ({
-      ...profile,
-      type: profile.type || "texassolver-tree",
-      label: profile.label || profile.id,
-      seatCount: Number(profile.seatCount) || 6,
-      root: profile.root ? absoluteConfigPath(profile.root) : "",
-      defaultOpenSizesBb: profile.defaultOpenSizesBb || config.defaultOpenSizesBb || {}
-    }));
+    .map(profile => {
+      const normalized = {
+        ...profile,
+        type: profile.type || "texassolver-tree",
+        label: profile.label || profile.id,
+        seatCount: Number(profile.seatCount) || 6,
+        root: profile.root ? absoluteConfigPath(profile.root) : "",
+        defaultOpenSizesBb: profile.defaultOpenSizesBb || config.defaultOpenSizesBb || {}
+      };
+      return { ...normalized, seatCounts: supportedSeatCounts(normalized) };
+    });
 
   if (!profiles.length && config.preflopRangeRoot) {
     profiles.push({
@@ -452,6 +553,7 @@ function configuredPreflopRangeProfiles() {
       label: "TexasSolver 6-max",
       type: "texassolver-tree",
       seatCount: 6,
+      seatCounts: [2, 3, 4, 5, 6],
       root: absoluteConfigPath(config.preflopRangeRoot),
       defaultOpenSizesBb: config.defaultOpenSizesBb || {}
     });
@@ -476,6 +578,7 @@ function publicPreflopRangeProfiles() {
       label: profile.label,
       type: profile.type,
       seatCount: profile.seatCount,
+      seatCounts: profile.seatCounts,
       available: profile.type === "simple-hand-list" || fs.existsSync(profile.root)
     }))
   };
@@ -856,11 +959,12 @@ function runPreflopRangeDecision(payload, options = {}) {
   const profile = configuredPreflopRangeProfile(options.preflopRangeProfileId);
   const rangeRoot = profile?.root || "";
   const handClass = handClassFromCards(payload?.player?.holeCards || []);
+  const seatCount = Number(payload?.table?.seatCount) || 0;
   const reasons = [];
   if (!profile) reasons.push("未配置可用的翻前 range profile");
   if (!["texassolver-tree", "simple-hand-list"].includes(profile?.type)) reasons.push(`暂不支持的翻前 range profile 类型：${profile.type}`);
   if (profile?.type === "texassolver-tree" && !fs.existsSync(rangeRoot)) reasons.push(`preflop range root 不存在：${rangeRoot}`);
-  if ((Number(payload?.table?.seatCount) || 0) !== profile?.seatCount) reasons.push(`当前 range profile 只支持 ${profile?.seatCount || 0}-max`);
+  if (profile && !profile.seatCounts.includes(seatCount)) reasons.push(`当前 range profile 只支持 ${profile.seatCounts.join("/")}-max`);
   if (!payload?.player?.position) reasons.push("缺少玩家位置，无法查找翻前 range");
   if (!handClass) reasons.push("无法从手牌构造 hand class");
   if (reasons.length) {
@@ -870,6 +974,8 @@ function runPreflopRangeDecision(payload, options = {}) {
         provider: "texassolver-preflop",
         rangeProfileId: profile?.id || "",
         rangeProfileLabel: profile?.label || "",
+        supportedSeatCounts: profile?.seatCounts || [],
+        seatCount,
         rangeRoot,
         handClass,
         unsupportedReasons: reasons
@@ -888,6 +994,8 @@ function runPreflopRangeDecision(payload, options = {}) {
         provider: "texassolver-preflop",
         rangeProfileId: profile.id,
         rangeProfileLabel: profile.label,
+        supportedSeatCounts: profile.seatCounts,
+        seatCount,
         rangeRoot,
         handClass,
         historyPath: preflopPathFromHistory(history),
@@ -902,6 +1010,8 @@ function runPreflopRangeDecision(payload, options = {}) {
       solverInput: JSON.stringify({
         rangeProfileId: profile.id,
         rangeProfileLabel: profile.label,
+        supportedSeatCounts: profile.seatCounts,
+        seatCount,
         rangeRoot,
         handClass,
         position: payload.player.position,
@@ -963,64 +1073,19 @@ function collectTokenUsage(value, usage = {}) {
 }
 
 function runCodexDecision(payload) {
-  return new Promise((resolve, reject) => {
-    const outFile = path.join(os.tmpdir(), `poker-codex-${Date.now()}-${Math.random().toString(16).slice(2)}.json`);
-    const prompt = makePrompt(payload);
-    const args = [
-      "exec",
-      "--skip-git-repo-check",
-      "--ephemeral",
-      "--sandbox",
-      "read-only",
-      "--json",
-      "--output-schema",
-      path.join(root, "codex-decision.schema.json"),
-      "-o",
-      outFile,
-      "-"
-    ];
-    const child = spawn("codex", args, { cwd: root, stdio: ["pipe", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      reject(new Error("Codex decision timed out"));
-    }, 25_000);
-
-    child.stdout.on("data", chunk => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on("data", chunk => {
-      stderr += chunk.toString();
-    });
-    child.on("error", error => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.on("close", code => {
-      clearTimeout(timer);
-      if (code !== 0) {
-        reject(new Error(stderr.trim() || `Codex exited with ${code}`));
-        return;
+  const prompt = makePrompt(payload);
+  return runCodexExec(prompt).then(result => {
+    const events = parseJsonLines(result.stdout);
+    const usage = events.reduce((usageResult, event) => collectTokenUsage(event, usageResult), {});
+    return {
+      decision: JSON.parse(result.raw),
+      debug: {
+        prompt,
+        rawOutput: result.raw,
+        command: `${result.command} exec`,
+        usage: Object.keys(usage).length ? usage : null
       }
-      try {
-        const raw = fs.readFileSync(outFile, "utf8").trim();
-        fs.rmSync(outFile, { force: true });
-        const events = parseJsonLines(stdout);
-        const usage = events.reduce((result, event) => collectTokenUsage(event, result), {});
-        resolve({
-          decision: JSON.parse(raw),
-          debug: {
-            prompt,
-            rawOutput: raw,
-            usage: Object.keys(usage).length ? usage : null
-          }
-        });
-      } catch (error) {
-        reject(error);
-      }
-    });
-    child.stdin.end(prompt);
+    };
   });
 }
 
@@ -1245,9 +1310,22 @@ function totalPotForState(tableState) {
 }
 
 function tablePositionForState(tableState, index) {
-  if (!tableState || tableState.players.length !== 6) return "";
-  const offset = (index - tableState.dealerIndex + tableState.players.length) % tableState.players.length;
-  return ["BTN", "SB", "BB", "UTG", "MP", "CO"][offset] || "";
+  if (!tableState || index < 0 || tableState.players?.[index]?.out) return "";
+  const players = tableState.players || [];
+  const liveIndexes = [];
+  for (let step = 0; step < players.length; step += 1) {
+    const candidate = (tableState.dealerIndex + step + players.length) % players.length;
+    if (!players[candidate]?.out) liveIndexes.push(candidate);
+  }
+  const offset = liveIndexes.indexOf(index);
+  const labelsBySeatCount = {
+    2: ["SB", "BB"],
+    3: ["BTN", "SB", "BB"],
+    4: ["BTN", "SB", "BB", "CO"],
+    5: ["BTN", "SB", "BB", "UTG", "CO"],
+    6: ["BTN", "SB", "BB", "UTG", "MP", "CO"]
+  };
+  return labelsBySeatCount[liveIndexes.length]?.[offset] || "";
 }
 
 function legalActionsForState(tableState, player) {
@@ -1607,8 +1685,8 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
   if (url.pathname === "/api/status") {
-    const codex = await codexStatus();
     const texasSolver = texasSolverStatus();
+    const codex = await Promise.race([codexStatus(), timeoutStatus("Codex", 1500)]);
     sendJson(res, 200, {
       ok: true,
       codex: codex.connected,
